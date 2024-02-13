@@ -1,8 +1,6 @@
 # bug-bounty-autoscript
 
-
-This script performs reconnaissance on a specified domain using various tools for subdomain enumeration,
-checks which subdomains are live, and runs tests against those live subdomains.
+This Python script is a automation tool tailored for performing VAPT on target domains. It employs a combination of subdomain enumeration techniques, live subdomain verification, and vulnerability scanning.  
 
 Usage:
 python3 bb.py <domain>
