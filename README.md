@@ -1,6 +1,6 @@
 # bug-bounty-autoscript
 
-"""
+
 This script performs reconnaissance on a specified domain using various tools for subdomain enumeration,
 checks which subdomains are live, and runs tests against those live subdomains.
 
@@ -13,4 +13,4 @@ Dependencies:
 - assetfinder
 - amass
 - nuclei
-"""
+
