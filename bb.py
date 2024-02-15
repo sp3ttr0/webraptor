@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 import subprocess
 import sys
 import shutil
@@ -7,7 +6,10 @@ import requests
 import re
 from colorama import Fore, Style
 
-def is_valid_domain(domain):
+domain = sys.argv[1]
+nmap_output_folder = f"{domain}/nmap_results"
+
+def is_valid_domain():
     """
     Check if the input string is a valid domain name.
 
@@ -59,82 +61,10 @@ def append_unique(filename, new_content):
         for line in new_content_lines:
             file.write(line + '\n')
 
-def check_live_subdomains(subdomains_file):
-    """
-    Check live subdomains using requests library.
-
-    Args:
-    subdomains_file (str): Path to the file containing subdomains.
-
-    Returns:
-    list: List of live subdomains.
-    """
-    live_subdomains = []
-    with open(subdomains_file, "r") as file:
-        for line in file:
-            subdomain = line.strip()
-            print(f"{Fore.BLUE}[*] Checking {subdomain}...{Style.RESET_ALL}", end=" ")
-            try:
-                response = requests.get(f"https://{subdomain}", timeout=10)
-                if response.status_code == 200 or response.status_code == 403:
-                    print(f"{Fore.GREEN}Status: Live (HTTP {response.status_code}){Style.RESET_ALL}")
-                    live_subdomains.append(subdomain)
-                else:
-                    print(f"{Fore.RED}Status: Not Live (HTTP {response.status_code}){Style.RESET_ALL}")
-            except requests.RequestException as e:
-                print(f"{Fore.RED}Error: ({e}){Style.RESET_ALL}")
-    return live_subdomains
-
-def run_nuclei(domain):
-
-    print(f"{Fore.BLUE}[*] Running nuclei against live subdomains...{Style.RESET_ALL}")
-    # Run nuclei against live subdomains
-    nuclei_process = subprocess.Popen(["nuclei", "-l", f"{domain}/alive.txt", "-es", "info", "-silent"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    
-    # Display progress
-    for stdout_line in iter(nuclei_process.stdout.readline, b''):
-        sys.stdout.write(stdout_line.decode())
-        sys.stdout.flush()
-
-    nuclei_output, nuclei_error = nuclei_process.communicate()
-    
-    # Check if there was an error
-    if nuclei_error:
-        print(f"{Fore.RED}[-] Error while running Nuclei: {nuclei_error.decode()}{Style.RESET_ALL}")
-    else:
-        with open(f"{domain}/nuclei.txt", "w") as nuclei_file:
-            nuclei_file.write(nuclei_output.decode())
-            print(f"{Fore.GREEN}[+] Nuclei tests completed.{Style.RESET_ALL}")
-
-
-def main(domain):
-    """
-    Main function to perform reconnaissance on the specified domain.
-
-    Args:
-    domain (str): The domain to perform reconnaissance on.
-
-    Returns:
-    None
-    """
-    if not is_valid_domain(domain):
-        print(f"{Fore.RED}[-] Error: Invalid domain name.{Style.RESET_ALL}")
-        sys.exit(1)
-
-    print(f"{Fore.BLUE}[*] Start checking for domain: {domain}{Style.RESET_ALL}")
-
-    # Check if required tools are available
-    required_tools = ['sublist3r', 'subfinder', 'assetfinder', 'amass', 'nuclei']
-    for tool in required_tools:
-        if not check_tool(tool):
-            print(f"{Fore.RED}[-] Error: {tool} is not installed or not available in the system.{Style.RESET_ALL}")
-            sys.exit(1)
-
-    # Create directory for the domain
-    subprocess.run(["mkdir", domain], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+def list_subdomains():
 
     print(f"{Fore.BLUE}[*] Finding subdomains...{Style.RESET_ALL}")
-    # Find subdomains using various tools
+
     print(f"{Fore.BLUE}[*] Listing subdomains using sublist3r...{Style.RESET_ALL}")
     subprocess.run(["sublist3r", "-d", domain], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     print(f"{Fore.GREEN}[+] sublist3r completed.{Style.RESET_ALL}")
@@ -161,14 +91,108 @@ def main(domain):
     with open(f"{domain}/subs.txt", "w") as file:
         file.write("\n".join(subs_content))
 
+
+def check_live_subdomains(subdomains_file):
+    """
+    Check live subdomains using requests library.
+
+    Args:
+    subdomains_file (str): Path to the file containing subdomains.
+
+    Returns:
+    list: List of live subdomains.
+    """
+    live_subdomains = []
+    with open(subdomains_file, "r") as file:
+        for line in file:
+            subdomain = line.strip()
+            print(f"{Fore.BLUE}[*] Checking {subdomain}...{Style.RESET_ALL}", end=" ")
+            try:
+                response = requests.get(f"https://{subdomain}", timeout=10)
+                if response.status_code == 200 or response.status_code == 403:
+                    print(f"{Fore.GREEN}Status: Live (HTTP {response.status_code}){Style.RESET_ALL}")
+                    live_subdomains.append(subdomain)
+                else:
+                    print(f"{Fore.RED}Status: Not Live (HTTP {response.status_code}){Style.RESET_ALL}")
+            except requests.RequestException as e:
+                print(f"{Fore.RED}Error: ({e}){Style.RESET_ALL}")
+    return live_subdomains
+
+def run_nmap():
+
+    print(f"{Fore.BLUE}[*] Running nmap against live subdomains...{Style.RESET_ALL}")
+    try:
+        subprocess.run(["mkdir", nmap_output_folder], check=True)
+    except subprocess.CalledProcessError:
+        pass
+    
+    with open(f"{domain}/subs_live.txt", "r") as file:
+        targets = file.readlines()
+        targets = [target.strip() for target in targets if target.strip()]
+
+    for target in targets:
+        nmap_output_file = f"{nmap_output_folder}/{target}.txt"
+        command = ["nmap", "-n", "-sV", "-A", "-p-", "-oA", nmap_output_file, target]
+
+        try:
+            result = subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
+            print(result.stdout)
+            print(f"{Fore.GREEN}[+] Nmap scan for {target} completed. Results saved to {nmap_output_file}{Style.RESET_ALL}")
+        except subprocess.CalledProcessError as e:
+            print(f"{Fore.RED}[-] Error while running Nmap for {target}: {e.stderr}{Style.RESET_ALL}")
+
+def run_nuclei():
+
+    print(f"{Fore.BLUE}[*] Running nuclei against live subdomains...{Style.RESET_ALL}")
+    nuclei_process = subprocess.Popen(["nuclei", "-l", f"{domain}/subs_live.txt", "-etags", "ssl,dns", "-silent"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    
+    for stdout_line in iter(nuclei_process.stdout.readline, b''):
+        sys.stdout.write(stdout_line.decode())
+        sys.stdout.flush()
+
+    nuclei_output, nuclei_error = nuclei_process.communicate()
+    
+    if nuclei_error:
+        print(f"{Fore.RED}[-] Error while running Nuclei: {nuclei_error.decode()}{Style.RESET_ALL}")
+    else:
+        with open(f"{domain}/nuclei.txt", "w") as nuclei_file:
+            nuclei_file.write(nuclei_output.decode())
+            print(f"{Fore.GREEN}[+] Nuclei tests completed.{Style.RESET_ALL}")
+
+
+def main():
+
+    if not is_valid_domain():
+        print(f"{Fore.RED}[-] Error: Invalid domain name.{Style.RESET_ALL}")
+        sys.exit(1)
+
+    print(f"{Fore.BLUE}[*] Start checking for domain: {domain}{Style.RESET_ALL}")
+
+    # Check if required tools are available
+    required_tools = ['sublist3r', 'subfinder', 'assetfinder', 'amass', 'nmap', 'nuclei']
+    for tool in required_tools:
+        if not check_tool(tool):
+            print(f"{Fore.RED}[-] Error: {tool} is not installed or not available in the system.{Style.RESET_ALL}")
+            sys.exit(1)
+
+    # Create directory for the domain
+    subprocess.run(["mkdir", domain], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    # List subdomains
+    list_subdomains()
+
+    # Check live subdomains 
     print(f"{Fore.BLUE}[*] Checking live subdomains...{Style.RESET_ALL}")
-    # Check live subdomains using requests library
+
     live_subdomains = check_live_subdomains(f"{domain}/subs.txt")
-    with open(f"{domain}/alive.txt", "w") as file:
+    with open(f"{domain}/subs_live.txt", "w") as file:
         for subdomain in live_subdomains:
             file.write(subdomain + "\n")
 
-    run_nuclei(domain)
+    # Run vulnerability scanner
+    run_nmap()
+    run_nuclei()
+
 
     print(f"{Fore.GREEN}Done!{Style.RESET_ALL}")
 
@@ -176,4 +200,4 @@ if __name__ == "__main__":
     if len(sys.argv) != 2:
         print(f"{Fore.RED}[*] Usage: python3 bb.py <domain>{Style.RESET_ALL}")
         sys.exit(1)
-    main(sys.argv[1])
+    main()
