@@ -81,7 +81,12 @@ def list_subdomains():
 
     print(f"{Fore.BLUE}[*] Listing subdomains using amass...{Style.RESET_ALL}")
     amass_output = subprocess.run(["amass", "enum", "-d", domain], stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.decode()
-    append_unique(f"{domain}/subs.txt", amass_output)
+    amass_subs = []
+    for line in amass_output.split('\n'):
+        if "Checking" in line:
+            amass_subdomain = line.split()[1]  # Extract the subdomain
+            amass_subs.append(amass_subdomain)
+    append_unique(f"{domain}/subs.txt", amass_subs)
     print(f"{Fore.GREEN}[+] amass completed.{Style.RESET_ALL}")
 
     # Read subs.txt, sort, and remove duplicates
