@@ -80,7 +80,7 @@ def list_subdomains():
     print(f"{Fore.GREEN}[+] assetfinder completed.{Style.RESET_ALL}")
 
     print(f"{Fore.BLUE}[*] Listing subdomains using amass...{Style.RESET_ALL}")
-    amass_output = subprocess.run(["amass", "enum", domain], stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.decode()
+    amass_output = subprocess.run(["amass", "enum", "-d", domain], stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.decode()
     append_unique(f"{domain}/subs.txt", amass_output)
     print(f"{Fore.GREEN}[+] amass completed.{Style.RESET_ALL}")
 
