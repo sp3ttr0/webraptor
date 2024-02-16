@@ -107,6 +107,7 @@ def check_live_subdomains(subdomains_file):
     Returns:
     list: List of live subdomains.
     """
+    print(f"{Fore.BLUE}[*] Checking live subdomains...{Style.RESET_ALL}")
     live_subdomains = []
     with open(subdomains_file, "r") as file:
         for line in file:
@@ -171,14 +172,14 @@ def main():
         print(f"{Fore.RED}[-] Error: Invalid domain name.{Style.RESET_ALL}")
         sys.exit(1)
 
-    print(f"{Fore.BLUE}[*] Start checking for domain: {domain}{Style.RESET_ALL}")
-
     # Check if required tools are available
     required_tools = ['sublist3r', 'subfinder', 'assetfinder', 'amass', 'nmap', 'nuclei']
     for tool in required_tools:
         if not check_tool(tool):
             print(f"{Fore.RED}[-] Error: {tool} is not installed or not available in the system.{Style.RESET_ALL}")
             sys.exit(1)
+    
+    print(f"{Fore.BLUE}[*] Start checking for domain: {domain}{Style.RESET_ALL}")
 
     # Create directory for the domain
     subprocess.run(["mkdir", domain], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -187,8 +188,6 @@ def main():
     list_subdomains()
 
     # Check live subdomains 
-    print(f"{Fore.BLUE}[*] Checking live subdomains...{Style.RESET_ALL}")
-
     live_subdomains = check_live_subdomains(f"{domain}/subs.txt")
     with open(f"{domain}/subs_live.txt", "w") as file:
         for subdomain in live_subdomains:
