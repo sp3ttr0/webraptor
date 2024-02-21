@@ -79,19 +79,6 @@ def list_subdomains():
     append_unique(f"{domain}/subs.txt", assetfinder_output)
     print(f"{Fore.GREEN}[+] assetfinder completed.{Style.RESET_ALL}")
 
-    print(f"{Fore.BLUE}[*] Listing subdomains using amass...{Style.RESET_ALL}")
-    amass_output = subprocess.run(["amass", "enum", "-d", domain], stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.decode()
-    amass_subs = []
-   # Extract subdomains from amass output
-    for line in amass_output.split('\n'):
-        subdomain_match = re.search(r'^\w+://([^/:]+)', line)
-        if subdomain_match:
-            amass_subdomain = subdomain_match.group(1)
-            amass_subs.append(amass_subdomain)
-    # Append unique subdomains to the subs.txt file
-    append_unique(f"{domain}/subs.txt", '\n'.join(amass_subs))
-    print(f"{Fore.GREEN}[+] amass completed.{Style.RESET_ALL}")
-
     # Read subs.txt, sort, and remove duplicates
     with open(f"{domain}/subs.txt", "r") as file:
         subs_content = sorted(set(file.read().splitlines()))
@@ -141,7 +128,7 @@ def run_nmap():
 
     for target in targets:
         nmap_output_file = f"{nmap_output_folder}/{target}.txt"
-        command = ["nmap", "-nv", "-sS", "-sV", "-A", "--min-rate", "1000", "-oA", nmap_output_file, target]
+        command = ["nmap", "-nv", "-sV", "-A", "--min-rate", "1000", "-oA", nmap_output_file, target]
 
         try:
             result = subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
