@@ -9,6 +9,6 @@ Dependencies:
 - sublist3r
 - subfinder
 - assetfinder
-- amass
+- nmap
 - nuclei
 
