@@ -163,7 +163,7 @@ def main():
         sys.exit(1)
 
     # Check if required tools are available
-    required_tools = ['sublist3r', 'subfinder', 'assetfinder', 'amass', 'nmap', 'nuclei']
+    required_tools = ['sublist3r', 'subfinder', 'assetfinder', 'nmap', 'nuclei']
     for tool in required_tools:
         if not check_tool(tool):
             print(f"{Fore.RED}[-] Error: {tool} is not installed or not available in the system.{Style.RESET_ALL}")
