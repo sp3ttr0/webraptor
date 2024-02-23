@@ -111,7 +111,7 @@ def check_live_subdomains(subdomains_file):
                 else:
                     print(f"{Fore.RED}Status: Not Live (HTTP {response.status_code}){Style.RESET_ALL}")
             except requests.RequestException as e:
-                print(f"{Fore.RED}Error: ({e}){Style.RESET_ALL}")
+                print(f"{Fore.RED}Error: Connection Timeout.{Style.RESET_ALL}")
     return live_subdomains
 
 def run_nmap():
