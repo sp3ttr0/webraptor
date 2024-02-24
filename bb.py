@@ -141,27 +141,37 @@ def run_nuclei():
 
     print(f"{Fore.BLUE}[*] Running nuclei against live subdomains...{Style.RESET_ALL}")
     # Define the subprocess command
-    nuclei_command = ["nuclei", "-l", f"{domain}/subs_live.txt", "-etags", "ssl,dns,headers", "-silent"]
+    nuclei_command = ["nuclei", "-l", f"{domain}/subs_live.txt", "-etags", "ssl,dns,headers,security", "-silent"]
     
     # Run the Nuclei process
     nuclei_process = subprocess.Popen(nuclei_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    
+    # Create a variable to store the output
+    nuclei_output = ""
     
     # Process the output while running
     for stdout_line in nuclei_process.stdout:
         sys.stdout.write(stdout_line)
         sys.stdout.flush()
+        nuclei_output += stdout_line
     
-    # Wait for the process to finish and retrieve the output
-    nuclei_output, nuclei_error = nuclei_process.communicate()
+    # Wait for the process to finish and retrieve the remaining output
+    nuclei_remaining_output, nuclei_error = nuclei_process.communicate()
+    
+    # Append any remaining output
+    if nuclei_remaining_output:
+        nuclei_output += nuclei_remaining_output
     
     # Display any error
     if nuclei_error:
         print(f"{Fore.RED}[-] Error while running Nuclei: {nuclei_error}{Style.RESET_ALL}")
     else:
+        # Display success message
+        print(f"{Fore.GREEN}[+] Nuclei tests completed.{Style.RESET_ALL}")
+    
         # Save the output to a file
         with open(f"{domain}/nuclei.txt", "w") as nuclei_file:
             nuclei_file.write(nuclei_output)
-            print(f"{Fore.GREEN}[+] Nuclei tests completed.{Style.RESET_ALL}")
 
 def main():
 
