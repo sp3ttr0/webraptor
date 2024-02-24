@@ -128,7 +128,7 @@ def run_nmap():
 
     for target in targets:
         nmap_output_file = f"{nmap_output_folder}/{target}.txt"
-        command = ["nmap", "-n", "-Pn", "-sV", "--script", "http-*,vuln*,auth,brute,exploit", "--min-rate", "1000", "-T4", "-oA", nmap_output_file, target]
+        command = ["nmap", "-n", "-Pn", "-sV", "--min-rate", "1000", "-T4", "-oA", nmap_output_file, target]
 
         try:
             result = subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
