@@ -128,7 +128,7 @@ def run_nmap():
 
     for target in targets:
         nmap_output_file = f"{nmap_output_folder}/{target}.txt"
-        command = ["nmap", "-nv", "-Pn", "-sV", "--script", "default,vuln*", "--min-rate", "1000", "-oA", nmap_output_file, target]
+        command = ["nmap", "-n", "-Pn", "-sV", "--script", "http-*,vuln*,auth,brute,exploit", "--min-rate", "1000", "-T4", "-oA", nmap_output_file, target]
 
         try:
             result = subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
@@ -140,21 +140,28 @@ def run_nmap():
 def run_nuclei():
 
     print(f"{Fore.BLUE}[*] Running nuclei against live subdomains...{Style.RESET_ALL}")
-    nuclei_process = subprocess.Popen(["nuclei", "-l", f"{domain}/subs_live.txt", "-etags", "ssl,dns", "-silent"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # Define the subprocess command
+    nuclei_command = ["nuclei", "-l", f"{domain}/subs_live.txt", "-etags", "ssl,dns,header", "-silent"]
     
-    for stdout_line in iter(nuclei_process.stdout.readline, b''):
-        sys.stdout.write(stdout_line.decode())
+    # Run the Nuclei process
+    nuclei_process = subprocess.Popen(nuclei_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    
+    # Process the output while running
+    for stdout_line in nuclei_process.stdout:
+        sys.stdout.write(stdout_line)
         sys.stdout.flush()
-
+    
+    # Wait for the process to finish and retrieve the output
     nuclei_output, nuclei_error = nuclei_process.communicate()
     
+    # Display any error
     if nuclei_error:
-        print(f"{Fore.RED}[-] Error while running Nuclei: {nuclei_error.decode()}{Style.RESET_ALL}")
+        print(f"{Fore.RED}[-] Error while running Nuclei: {nuclei_error}{Style.RESET_ALL}")
     else:
+        # Save the output to a file
         with open(f"{domain}/nuclei.txt", "w") as nuclei_file:
-            nuclei_file.write(nuclei_output.decode())
+            nuclei_file.write(nuclei_output)
             print(f"{Fore.GREEN}[+] Nuclei tests completed.{Style.RESET_ALL}")
-
 
 def main():
 
