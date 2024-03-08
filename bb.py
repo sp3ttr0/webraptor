@@ -141,7 +141,7 @@ def run_nuclei():
 
     print(f"{Fore.BLUE}[*] Running nuclei against live subdomains...{Style.RESET_ALL}")
     # Define the subprocess command
-    nuclei_command = ["nuclei", "-l", f"{domain}/subs_live.txt", "-etags", "ssl,dns,headers", "-silent", "-o", f"{domain}/nuclei.txt"]
+    nuclei_command = ["nuclei", "-l", f"{domain}/subs_live.txt", "-etags", "ssl,dns", "-exclude-templates", "/home/kali/.local/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml,/home/kali/.local/nuclei-templates/http/misconfiguration/xss-deprecated-header.yaml", "-silent", "-o", f"{domain}/nuclei.txt"]
     
     # Run the Nuclei process
     nuclei_process = subprocess.Popen(nuclei_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
