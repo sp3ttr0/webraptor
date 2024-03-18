@@ -67,15 +67,17 @@ def check_live_subdomains(subdomains_file):
             print(f"{Fore.BLUE}[*] Checking {subdomain}...{Style.RESET_ALL}", end=" ")
             try:
                 with httpx.Client(timeout=15) as client:
-                    response = client.get(f"https://{subdomain}")
+                    response = client.get(f"https://{subdomain}", allow_redirects=True)
                     if response.status_code == 200 or response.status_code == 403:
                         print(f"{Fore.GREEN}Status: Live (HTTP {response.status_code}){Style.RESET_ALL}")
                         live_subdomains.append(subdomain)
                     elif response.status_code == 301 or response.status_code == 302:
                         print(f"{Fore.GREEN}Status: Redirected (HTTP {response.status_code}){Style.RESET_ALL}")
-                        redirected_url = response.url.decode('utf-8') if isinstance(response.url, bytes) else response.url
-                        parsed_url = urlparse(redirected_url)
-                        redirected_domain = parsed_url.netloc
+                        redirected_url = response.url
+                        if isinstance(redirected_url, str):
+                            redirected_domain = urlparse(redirected_url).netloc
+                        else:
+                            redirected_domain = urlparse(str(redirected_url)).netloc
                         print(f"{Fore.GREEN}Redirected Domain: {redirected_domain}{Style.RESET_ALL}")
                         live_subdomains.append(redirected_domain)
                     else:
