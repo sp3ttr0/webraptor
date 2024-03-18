@@ -64,7 +64,6 @@ def list_subdomains():
     with open(f"{domain}/subs.txt", "w") as file:
         file.write("\n".join(subs_content))
 
-
 def check_live_subdomains(subdomains_file):
     print(f"{Fore.BLUE}[*] Checking live subdomains...{Style.RESET_ALL}")
     live_subdomains = []
@@ -110,7 +109,7 @@ def run_nmap():
         try:
             result = subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
             print(f"{Fore.BLUE}[+] Running Nmap scan for {target}...{Style.RESET_ALL}")
-            print(f"\n"result.stdout)
+            print(f"\n", result.stdout)
             print(f"{Fore.GREEN}[+] Nmap scan for {target} completed. Results saved to {nmap_output_file}{Style.RESET_ALL}")
         except subprocess.CalledProcessError as e:
             print(f"{Fore.RED}[-] Error while running Nmap for {target}: {e.stderr}{Style.RESET_ALL}")
