@@ -73,7 +73,7 @@ def check_live_subdomains(subdomains_file):
                         live_subdomains.append(subdomain)
                     elif response.status_code == 301 or response.status_code == 302:
                         print(f"{Fore.GREEN}Status: Redirected (HTTP {response.status_code}){Style.RESET_ALL}")
-                        redirected_url = response.url
+                        redirected_url = response.url.decode('utf-8') if isinstance(response.url, bytes) else response.url
                         parsed_url = urlparse(redirected_url)
                         redirected_domain = parsed_url.netloc
                         print(f"{Fore.GREEN}Redirected Domain: {redirected_domain}{Style.RESET_ALL}")
