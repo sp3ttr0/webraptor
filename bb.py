@@ -155,14 +155,14 @@ def main():
             file.write(subdomain + "\n")
     # Check if subs_live.txt is empty
     if is_file_empty(f"{domain}/subs_live.txt"):
-        print(f"{Fore.BLUE}No live subdomains found. Ending Program...{Style.RESET_ALL}")
+        print(f"{Fore.BLUE}[*] No live subdomains found. Ending Program...{Style.RESET_ALL}")
         sys.exit()
         
     # Run vulnerability scanner
     run_nmap()
     run_nuclei()
 
-    print(f"{Fore.GREEN}Done!{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}}[+] Done!{Style.RESET_ALL}")
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
