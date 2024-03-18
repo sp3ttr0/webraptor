@@ -7,9 +7,6 @@ import httpx
 from urllib.parse import urlparse
 from colorama import Fore, Style
 
-domain = sys.argv[1]
-nmap_output_folder = f"{domain}/nmap_results"
-
 def is_valid_domain():
     pattern = r"^(?:[-A-Za-z0-9]+\.)+[A-Za-z]{2,6}$"
     return re.match(pattern, domain) is not None
@@ -167,4 +164,6 @@ if __name__ == "__main__":
     if len(sys.argv) != 2:
         print(f"{Fore.RED}[*] Usage: python3 bb.py <domain>{Style.RESET_ALL}")
         sys.exit(1)
+    domain = sys.argv[1]
+    nmap_output_folder = f"{domain}/nmap_results"
     main()
