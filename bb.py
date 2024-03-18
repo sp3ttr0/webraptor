@@ -154,7 +154,7 @@ def main():
             file.write(subdomain + "\n")
     # Check if subs_live.txt is empty
     if is_file_empty(f"{domain}/subs_live.txt"):
-        print(f"{Fore.BLUE}[*] No live subdomains found. Ending Program...{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}[*] No live subdomains found. Ending Program...{Style.RESET_ALL}")
         sys.exit()
         
     # Run vulnerability scanner
