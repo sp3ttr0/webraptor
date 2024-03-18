@@ -70,6 +70,13 @@ def check_live_subdomains(subdomains_file):
                     if response.status_code == 200 or response.status_code == 403:
                         print(f"{Fore.GREEN}Status: Live (HTTP {response.status_code}){Style.RESET_ALL}")
                         live_subdomains.append(subdomain)
+                    elif response.status_code == 302:
+                        print(f"{Fore.GREEN}Status: Redirected (HTTP {response.status_code}){Style.RESET_ALL}")
+                        redirected_url = response.url
+                        parsed_url = urlparse(redirected_url)
+                        redirected_domain = parsed_url.netloc
+                        print(f"{Fore.GREEN}Redirected Domain: {redirected_domain}{Style.RESET_ALL}")
+                        live_subdomains.append(redirected_domain)
                     else:
                         print(f"{Fore.RED}Status: Not Live (HTTP {response.status_code}){Style.RESET_ALL}")
             except httpx.RequestError as e:
