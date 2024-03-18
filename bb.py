@@ -17,6 +17,13 @@ def is_valid_domain():
 def check_tool(tool):
     return shutil.which(tool) is not None
 
+def is_file_empty(file_path):
+    try:
+        with open(file_path, 'r') as file:
+            return not any(file.read())
+    except FileNotFoundError:
+        return True
+
 def append_unique(filename, new_content):
     # Read existing content, if any
     existing_content = set()
