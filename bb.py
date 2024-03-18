@@ -162,7 +162,7 @@ def main():
     run_nmap()
     run_nuclei()
 
-    print(f"{Fore.GREEN}}[+] Done!{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}[+] Done!{Style.RESET_ALL}")
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
