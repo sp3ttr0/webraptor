@@ -67,7 +67,7 @@ def check_live_subdomains(subdomains_file):
             print(f"{Fore.BLUE}[*] Checking {subdomain}...{Style.RESET_ALL}", end=" ")
             try:
                 with httpx.Client(timeout=15) as client:
-                    response = client.get(f"https://{subdomain}", allow_redirects=True)
+                    response = client.get(f"https://{subdomain}")
                     if response.status_code == 200 or response.status_code == 403:
                         print(f"{Fore.GREEN}Status: Live (HTTP {response.status_code}){Style.RESET_ALL}")
                         live_subdomains.append(subdomain)
