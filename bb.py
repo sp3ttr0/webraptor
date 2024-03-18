@@ -4,6 +4,7 @@ import sys
 import shutil
 import requests
 import re
+import httpx
 from colorama import Fore, Style
 
 domain = sys.argv[1]
