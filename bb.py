@@ -2,7 +2,6 @@
 import subprocess
 import sys
 import shutil
-import requests
 import re
 import httpx
 from colorama import Fore, Style
@@ -104,7 +103,7 @@ def run_nuclei():
     # Define the subprocess command
     nuclei_command = ["nuclei", "-l", f"{domain}/subs_live.txt", "-etags", "ssl,dns", "-exclude-templates", "/home/kali/.local/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml,/home/kali/.local/nuclei-templates/http/misconfiguration/xss-deprecated-header.yaml", "-silent", "-o", f"{domain}/nuclei.txt"]
     # Run the Nuclei process
-    nuclei_process = subprocess.Popen(nuclei_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    nuclei_process = subprocess.Popen(nuclei_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     # Process the output while running
     for stdout_line in nuclei_process.stdout:
         sys.stdout.write(stdout_line)
