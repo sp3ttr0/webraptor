@@ -4,6 +4,7 @@ import sys
 import shutil
 import re
 import httpx
+from urllib.parse import urlparse
 from colorama import Fore, Style
 
 domain = sys.argv[1]
@@ -70,7 +71,7 @@ def check_live_subdomains(subdomains_file):
                     if response.status_code == 200 or response.status_code == 403:
                         print(f"{Fore.GREEN}Status: Live (HTTP {response.status_code}){Style.RESET_ALL}")
                         live_subdomains.append(subdomain)
-                    elif response.status_code == 302:
+                    elif response.status_code == 301 or response.status_code == 302:
                         print(f"{Fore.GREEN}Status: Redirected (HTTP {response.status_code}){Style.RESET_ALL}")
                         redirected_url = response.url
                         parsed_url = urlparse(redirected_url)
