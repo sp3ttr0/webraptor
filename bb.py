@@ -52,7 +52,7 @@ def list_subdomains():
     append_unique(f"{domain}/subs.txt", subfinder_output)
     print(f"{Fore.GREEN}[+] subfinder completed.{Style.RESET_ALL}")
 
-    print(f"{Fore.BLUE}[*] Listing subdomains using  assetfinder...{Style.RESET_ALL}")
+    print(f"{Fore.BLUE}[*] Listing subdomains using assetfinder...{Style.RESET_ALL}")
     assetfinder_output = subprocess.run(["assetfinder", "-subs-only", domain], stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.decode()
     append_unique(f"{domain}/subs.txt", assetfinder_output)
     print(f"{Fore.GREEN}[+] assetfinder completed.{Style.RESET_ALL}")
