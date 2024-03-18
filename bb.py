@@ -10,41 +10,13 @@ domain = sys.argv[1]
 nmap_output_folder = f"{domain}/nmap_results"
 
 def is_valid_domain():
-    """
-    Check if the input string is a valid domain name.
-
-    Args:
-    domain (str): The domain name to validate.
-
-    Returns:
-    bool: True if the input is a valid domain name, False otherwise.
-    """
     pattern = r"^(?:[-A-Za-z0-9]+\.)+[A-Za-z]{2,6}$"
     return re.match(pattern, domain) is not None
 
 def check_tool(tool):
-    """
-    Check if the specified tool is available in the system.
-
-    Args:
-    tool (str): The name of the tool to check.
-
-    Returns:
-    bool: True if the tool is available, False otherwise.
-    """
     return shutil.which(tool) is not None
 
 def append_unique(filename, new_content):
-    """
-    Append unique content to a file, avoiding duplicates.
-
-    Args:
-    filename (str): The name of the file to append to.
-    new_content (str): The new content to append.
-
-    Returns:
-    None
-    """
     # Read existing content, if any
     existing_content = set()
     try:
@@ -62,9 +34,7 @@ def append_unique(filename, new_content):
             file.write(line + '\n')
 
 def list_subdomains():
-
     print(f"{Fore.BLUE}[*] Finding subdomains...{Style.RESET_ALL}")
-
     print(f"{Fore.BLUE}[*] Listing subdomains using sublist3r...{Style.RESET_ALL}")
     subprocess.run(["sublist3r", "-d", domain], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     print(f"{Fore.GREEN}[+] sublist3r completed.{Style.RESET_ALL}")
@@ -88,15 +58,6 @@ def list_subdomains():
 
 
 def check_live_subdomains(subdomains_file):
-    """
-    Check live subdomains using requests library.
-
-    Args:
-    subdomains_file (str): Path to the file containing subdomains.
-
-    Returns:
-    list: List of live subdomains.
-    """
     print(f"{Fore.BLUE}[*] Checking live subdomains...{Style.RESET_ALL}")
     live_subdomains = []
     with open(subdomains_file, "r") as file:
@@ -104,18 +65,18 @@ def check_live_subdomains(subdomains_file):
             subdomain = line.strip()
             print(f"{Fore.BLUE}[*] Checking {subdomain}...{Style.RESET_ALL}", end=" ")
             try:
-                response = requests.get(f"https://{subdomain}", timeout=10)
-                if response.status_code == 200 or response.status_code == 403:
-                    print(f"{Fore.GREEN}Status: Live (HTTP {response.status_code}){Style.RESET_ALL}")
-                    live_subdomains.append(subdomain)
-                else:
-                    print(f"{Fore.RED}Status: Not Live (HTTP {response.status_code}){Style.RESET_ALL}")
-            except requests.RequestException as e:
+                with httpx.Client(timeout=15) as client:
+                    response = client.get(f"https://{subdomain}")
+                    if response.status_code == 200 or response.status_code == 403:
+                        print(f"{Fore.GREEN}Status: Live (HTTP {response.status_code}){Style.RESET_ALL}")
+                        live_subdomains.append(subdomain)
+                    else:
+                        print(f"{Fore.RED}Status: Not Live (HTTP {response.status_code}){Style.RESET_ALL}")
+            except httpx.RequestError as e:
                 print(f"{Fore.RED}Error: Connection Timeout.{Style.RESET_ALL}")
     return live_subdomains
 
 def run_nmap():
-
     print(f"{Fore.BLUE}[*] Running nmap against live subdomains...{Style.RESET_ALL}")
     try:
         subprocess.run(["mkdir", nmap_output_folder], check=True)
@@ -138,22 +99,17 @@ def run_nmap():
             print(f"{Fore.RED}[-] Error while running Nmap for {target}: {e.stderr}{Style.RESET_ALL}")
 
 def run_nuclei():
-
     print(f"{Fore.BLUE}[*] Running nuclei against live subdomains...{Style.RESET_ALL}")
     # Define the subprocess command
     nuclei_command = ["nuclei", "-l", f"{domain}/subs_live.txt", "-etags", "ssl,dns", "-exclude-templates", "/home/kali/.local/nuclei-templates/http/misconfiguration/http-missing-security-headers.yaml,/home/kali/.local/nuclei-templates/http/misconfiguration/xss-deprecated-header.yaml", "-silent", "-o", f"{domain}/nuclei.txt"]
-    
     # Run the Nuclei process
-    nuclei_process = subprocess.Popen(nuclei_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    
+    nuclei_process = subprocess.Popen(nuclei_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
     # Process the output while running
     for stdout_line in nuclei_process.stdout:
         sys.stdout.write(stdout_line)
         sys.stdout.flush()
-    
     # Wait for the process to finish
     nuclei_process.communicate()
-    
     # Check if the process has finished successfully
     if nuclei_process.returncode == 0:
         print(f"{Fore.GREEN}[+] Nuclei tests completed.{Style.RESET_ALL}")
@@ -161,36 +117,28 @@ def run_nuclei():
         print(f"{Fore.RED}[-] Error while running Nuclei.{Style.RESET_ALL}")
         
 def main():
-
     if not is_valid_domain():
         print(f"{Fore.RED}[-] Error: Invalid domain name.{Style.RESET_ALL}")
         sys.exit(1)
-
     # Check if required tools are available
     required_tools = ['sublist3r', 'subfinder', 'assetfinder', 'nmap', 'nuclei']
     for tool in required_tools:
         if not check_tool(tool):
             print(f"{Fore.RED}[-] Error: {tool} is not installed or not available in the system.{Style.RESET_ALL}")
             sys.exit(1)
-    
     print(f"{Fore.BLUE}[*] Start checking for domain: {domain}{Style.RESET_ALL}")
-
     # Create directory for the domain
     subprocess.run(["mkdir", domain], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
     # List subdomains
     list_subdomains()
-
     # Check live subdomains 
     live_subdomains = check_live_subdomains(f"{domain}/subs.txt")
     with open(f"{domain}/subs_live.txt", "w") as file:
         for subdomain in live_subdomains:
             file.write(subdomain + "\n")
-
     # Run vulnerability scanner
     run_nmap()
     run_nuclei()
-
 
     print(f"{Fore.GREEN}Done!{Style.RESET_ALL}")
 
