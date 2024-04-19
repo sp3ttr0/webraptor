@@ -41,7 +41,8 @@ def append_unique(filename, new_content):
 def list_subdomains():
     print(f"{Fore.BLUE}[*] Finding subdomains...{Style.RESET_ALL}")
     print(f"{Fore.BLUE}[*] Listing subdomains using sublist3r...{Style.RESET_ALL}")
-    subprocess.run(["sublist3r", "-d", domain], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    sublister_output =subprocess.run(["sublist3r", "-d", domain], stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.decode()
+    append_unique(f"{domain}/subs.txt", sublister_output)
     print(f"{Fore.GREEN}[+] sublist3r completed.{Style.RESET_ALL}")
 
     print(f"{Fore.BLUE}[*] Listing subdomains using subfinder...{Style.RESET_ALL}")
