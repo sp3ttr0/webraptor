@@ -76,7 +76,6 @@ def check_live_subdomains(subdomains_file):
                     else:
                         print(f"{Fore.GREEN}Status: Live (HTTP {response.status_code}){Style.RESET_ALL}")
                         live_subdomains.append(subdomain)
-                        
             except httpx.RequestError as e:
                 print(f"{Fore.RED}Error: Connection Timeout.{Style.RESET_ALL}")
     return live_subdomains
