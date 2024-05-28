@@ -69,15 +69,15 @@ def check_live_subdomains(subdomains_file):
             subdomain = line.strip()
             print(f"{Fore.BLUE}[*] Checking {subdomain}...{Style.RESET_ALL}", end=" ")
             try:
-                with httpx.Client(timeout=15) as client:
+                with httpx.Client(timeout=15, follow_redirects=True) as client:
                     response = client.get(f"https://{subdomain}")
-                    if response.status_code == 404:
-                        print(f"{Fore.RED}Status: Not Live (HTTP {response.status_code}){Style.RESET_ALL}")
-                    else:
-                        print(f"{Fore.GREEN}Status: Live (HTTP {response.status_code}){Style.RESET_ALL}")
+                    if response.status_code == 200:
+                        print(f"{Fore.GREEN}Status: Live (HTTP 200){Style.RESET_ALL}")
                         live_subdomains.append(subdomain)
+                    else:
+                        print(f"{Fore.RED}Status: Not Live (HTTP {response.status_code}){Style.RESET_ALL}")
             except httpx.RequestError as e:
-                print(f"{Fore.RED}Error: Connection Timeout.{Style.RESET_ALL}")
+                print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
     return live_subdomains
 
 def run_nmap():
