@@ -1,6 +1,6 @@
-# bug-bounty-autoscript
+# BBRaptor
 
-This Python script is an automation tool tailored for performing VAPT on target domains. It employs a combination of subdomain enumeration techniques, live subdomain verification, and vulnerability scanning.  
+This Python script is an automation tool for performing VAPT on target domains. It employs subdomain enumeration techniques, live subdomain verification, and vulnerability scanning.  
 
 Usage:
 python3 bb.py {domain}
