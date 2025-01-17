@@ -15,7 +15,6 @@ def is_valid_domain(domain):
     return re.match(pattern, domain) is not None
 
 # Check if a tool is available
-
 def check_tool(tool):
     return shutil.which(tool) is not None and subprocess.run([tool, "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0
 
@@ -122,6 +121,26 @@ def run_nuclei(domain, live_subdomains, output_dir, nuclei_template):
     except subprocess.CalledProcessError as e:
         print(f"{Fore.RED}[-] Nuclei error: {e.stderr}{Style.RESET_ALL}")
 
+# Run Dirsearch scans
+def run_dirsearch(live_subdomains, output_dir):
+    print(f"{Fore.BLUE}[*] Running Dirsearch on live subdomains...{Style.RESET_ALL}")
+    
+    def dirsearch_scan(subdomain):
+        print(f"{Fore.BLUE}[*] Brute-forcing directories for {subdomain}...{Style.RESET_ALL}")
+        output_file = f"{output_dir}/dirsearch_results/{subdomain}.txt"
+        dirsearch_command = [
+            "dirsearch", "-u", f"https://{subdomain}",
+            "-i", "200,204,403,443", "-x", "500,502,429,581,503", 
+            "-R", "5", "--random-agent", "-t", "50", "-F", "-o", output_file
+        ]
+        subprocess.run(dirsearch_command)
+        print(f"{Fore.GREEN}[+] Dirsearch results for {subdomain} saved to {output_file}{Style.RESET_ALL}")
+    
+    subprocess.run(["mkdir", "-p", f"{output_dir}/dirsearch_results"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    with ThreadPoolExecutor() as executor:
+        executor.map(dirsearch_scan, live_subdomains)
+
 # Main function
 def main():
     parser = argparse.ArgumentParser(description="Bug Bounty Raptor")
@@ -137,7 +156,7 @@ def main():
         print(f"{Fore.RED}[-] Invalid domain name.{Style.RESET_ALL}")
         sys.exit(1)
 
-    required_tools = ["sublist3r", "subfinder", "assetfinder", "nmap", "nuclei"]
+    required_tools = ["sublist3r", "subfinder", "assetfinder", "nmap", "nuclei", "dirsearch"]
     for tool in required_tools:
         if not check_tool(tool):
             print(f"{Fore.RED}[-] Error: {tool} is not installed or not available.{Style.RESET_ALL}")
@@ -156,6 +175,7 @@ def main():
         sys.exit()
 
     run_nmap(domain, live_subdomains, output_dir)
+    run_dirsearch(live_subdomains, output_dir)
     run_nuclei(domain, live_subdomains, output_dir, args.nuclei_template)
 
     print(f"{Fore.GREEN}[+] All tasks completed. Results saved in {output_dir}.{Style.RESET_ALL}")
