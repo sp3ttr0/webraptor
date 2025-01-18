@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+
+# ===============================================================
+# Bug Bounty Raptor - Automated Bug Bounty Scanning Script
+# ---------------------------------------------------------------
+# This script automates the bug bounty reconnaissance process, 
+# performing subdomain enumeration, live subdomain checks, 
+# and comprehensive scanning with tools such as Nmap, Nuclei, 
+# and Dirsearch. It utilizes Python alongside powerful external 
+# tools to help network administrators and pentesters identify 
+# potential vulnerabilities in target domains.
+#
+# Author: Howell King Jr. | Github: https://github.com/sp3ttr0
+# ===============================================================
+
 import subprocess
 import sys
 import shutil
