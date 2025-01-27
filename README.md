@@ -18,7 +18,6 @@ Bug Bounty Raptor is an automated tool to streamline the bug bounty process by p
 
 ## Requirements
 Ensure the following tools are installed and available in your `PATH`:
-- [Python 3](https://www.python.org/)
 - [sublist3r](https://github.com/aboul3la/Sublist3r)
 - [subfinder](https://github.com/projectdiscovery/subfinder)
 - [assetfinder](https://github.com/tomnomnom/assetfinder)
@@ -29,14 +28,14 @@ Ensure the following tools are installed and available in your `PATH`:
 ### Python Libraries
 Install the required Python libraries:
 ```bash
-pip install colorama httpx
+pip3 install -r requirements.txt
 ```
 
 ## Usage
 
 ### Basic Usage
 ```bash
-python3 script.py <domain>
+python3 bbraptor.py <domain>
 ```
 
 ### Options
