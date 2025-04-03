@@ -192,7 +192,7 @@ def main():
     list_subdomains(domain, output_dir)
     live_subdomains = check_live_subdomains(f"{output_dir}/subs.txt")
 
-   if not live_subdomains:
+    if not live_subdomains:
         print(f"{Fore.YELLOW}[!] No live subdomains found. Exiting.{Style.RESET_ALL}")
         sys.exit()
     
