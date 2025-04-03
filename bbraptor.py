@@ -155,38 +155,49 @@ def run_dirsearch(live_subdomains, output_dir):
     with ThreadPoolExecutor() as executor:
         executor.map(dirsearch_scan, live_subdomains)
 
+# Extract domain from URL
+def extract_domain(url):
+    parsed_url = urlparse(url)
+    domain = parsed_url.netloc if parsed_url.netloc else parsed_url.path
+    return domain
+
+# Validate domain name (supports full URLs)
+def is_valid_domain(domain):
+    pattern = r"^(?:[-A-Za-z0-9]+\.)+[A-Za-z]{2,6}$"
+    return re.match(pattern, domain) is not None
+
 # Main function
 def main():
     parser = argparse.ArgumentParser(description="Bug Bounty Raptor")
-    parser.add_argument("domain", help="Target domain")
+    parser.add_argument("target", help="Target domain or URL (http://example.com or example.com)")
     parser.add_argument("--output-dir", default="results", help="Base directory for storing results")
     parser.add_argument("--nuclei-template", default=None, help="Custom Nuclei template to use for scans")
     args = parser.parse_args()
-
-    domain = args.domain
-    output_dir = f"{args.output_dir}/{domain}"
-
-    if not is_valid_domain(domain):
-        print(f"{Fore.RED}[-] Invalid domain name.{Style.RESET_ALL}")
-        sys.exit(1)
+    domain = extract_domain(args.target)
 
     required_tools = ["sublist3r", "subfinder", "assetfinder", "nmap", "nuclei", "dirsearch"]
     for tool in required_tools:
         if not check_tool(tool):
             print(f"{Fore.RED}[-] Error: {tool} is not installed or not available.{Style.RESET_ALL}")
             sys.exit(1)
+    
+    if not is_valid_domain(domain):
+        print(f"{Fore.RED}[-] Invalid domain name.{Style.RESET_ALL}")
+        sys.exit(1)
+
+    output_dir = f"{args.output_dir}/{domain}"
 
     print(f"{Fore.BLUE}[*] Starting scans for {domain}{Style.RESET_ALL}")
+    
     list_subdomains(domain, output_dir)
-
     live_subdomains = check_live_subdomains(f"{output_dir}/subs.txt")
-    with open(f"{output_dir}/subs_live.txt", "w") as file:
-        for subdomain in live_subdomains:
-            file.write(subdomain + "\n")
 
-    if not live_subdomains:
+   if not live_subdomains:
         print(f"{Fore.YELLOW}[!] No live subdomains found. Exiting.{Style.RESET_ALL}")
         sys.exit()
+    
+    with open(f"{output_dir}/subs_live.txt", "w") as file:
+        file.write("\n".join(live_subdomains) + "\n")
 
     run_nmap(domain, live_subdomains, output_dir)
     run_dirsearch(live_subdomains, output_dir)
