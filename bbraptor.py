@@ -67,9 +67,9 @@ def list_subdomains(domain, output_dir):
     subfinder_output = subprocess.run(["subfinder", "-d", domain, "-silent"], stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.decode()
     append_unique(f"{output_dir}/subs.txt", subfinder_output)
 
-    print(f"{Fore.BLUE}[*] Listing subdomains using assetfinder...{Style.RESET_ALL}")
-    assetfinder_output = subprocess.run(["assetfinder", "-subs-only", domain], stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.decode()
-    append_unique(f"{output_dir}/subs.txt", assetfinder_output)
+    print(f"{Fore.BLUE}[*] Listing subdomains using amass...{Style.RESET_ALL}")
+    amass_output = subprocess.run(["amass", "enum", "-d", domain, "-silent"], stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.decode()
+    append_unique(f"{output_dir}/subs.txt", amass_output)
 
     with open(f"{output_dir}/subs.txt", "r") as file:
         subs_content = sorted(set(file.read().splitlines()))
@@ -175,7 +175,7 @@ def main():
     args = parser.parse_args()
     domain = extract_domain(args.target)
 
-    required_tools = ["sublist3r", "subfinder", "assetfinder", "nmap", "nuclei", "dirsearch"]
+    required_tools = ["sublist3r", "subfinder", "amass", "nmap", "nuclei", "dirsearch"]
     for tool in required_tools:
         if not check_tool(tool):
             print(f"{Fore.RED}[-] Error: {tool} is not installed or not available.{Style.RESET_ALL}")
