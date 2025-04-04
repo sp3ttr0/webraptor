@@ -121,7 +121,7 @@ def run_nuclei(domain, live_subdomains, output_dir, nuclei_template):
     try:
         nuclei_command = [
             "nuclei", "-l", f"{output_dir}/subs_live.txt",
-            "-etags", "ssl,dns",
+            "-etags", "ssl,dns,security-headers",
             "-silent", "-o", nuclei_output
         ]
         if nuclei_template:
