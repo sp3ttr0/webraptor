@@ -1,10 +1,10 @@
 # Bug Bounty Raptor
 
-Bug Bounty Raptor is an automated tool to streamline the bug bounty process by performing subdomain enumeration, checking for live subdomains, and running various scans, including Nmap, Nuclei, and Dirsearch. The results are saved in organized directories for further analysis.
+Bug Bounty Raptor is an automated tool to streamline the bug bounty process by performing subdomain enumeration, checking for live subdomains, and running various scans, including Nmap, Dirsearch, and Nuclei. The results are saved in organized directories for further analysis.
 
 ## Features
 - Subdomain Enumeration
-  - Using `sublist3r`, `subfinder`, and `assetfinder`.
+  - Using `sublist3r`, `subfinder`.
 - Live Subdomain Check
   - Identifies active subdomains using HTTP requests.
 - Nmap Scanning
@@ -20,7 +20,6 @@ Bug Bounty Raptor is an automated tool to streamline the bug bounty process by p
 Ensure the following tools are installed and available in your `PATH`:
 - [sublist3r](https://github.com/aboul3la/Sublist3r)
 - [subfinder](https://github.com/projectdiscovery/subfinder)
-- [assetfinder](https://github.com/tomnomnom/assetfinder)
 - [nmap](https://nmap.org/)
 - [nuclei](https://github.com/projectdiscovery/nuclei)
 - [dirsearch](https://github.com/maurosoria/dirsearch)
