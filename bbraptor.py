@@ -104,7 +104,7 @@ def run_nmap(domain, live_subdomains, output_dir):
 
     def scan_target(target):
         nmap_output_file = f"{output_dir}/nmap_results/{target}.txt"
-        command = ["nmap", "-n", "-Pn", "-sV", "--min-rate", "1000", "-T4", "-oN", nmap_output_file, target]
+        command = ["nmap", "-n", "-sV", "--script", "http*", "--min-rate", "1000", "-T4", "-oN", nmap_output_file, target]
         try:
             result = subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
             print(f"{Fore.GREEN}[+] Nmap completed for {target}. Results saved to {nmap_output_file}{Style.RESET_ALL}")
