@@ -68,7 +68,7 @@ def list_subdomains(domain, output_dir):
     append_unique(f"{output_dir}/subs.txt", subfinder_output)
 
     print(f"{Fore.BLUE}[*] Listing subdomains using amass...{Style.RESET_ALL}")
-    amass_output = subprocess.run(["amass", "enum", domain], stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.decode()
+    amass_output = subprocess.run(["amass", "enum", "-d", domain], stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.decode()
     append_unique(f"{output_dir}/subs.txt", amass_output)
 
     with open(f"{output_dir}/subs.txt", "r") as file:
