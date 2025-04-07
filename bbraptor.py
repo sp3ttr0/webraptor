@@ -59,18 +59,26 @@ def append_unique(filename, new_content):
 def list_subdomains(domain, output_dir):
     print(f"{Fore.BLUE}[*] Finding subdomains...{Style.RESET_ALL}")
     subprocess.run(["mkdir", "-p", output_dir], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    subdomains_path = f"{output_dir}/subs.txt"
     
     print(f"{Fore.BLUE}[*] Listing subdomains using sublist3r...{Style.RESET_ALL}")
     subprocess.run(["sublist3r", "-d", domain, "-o", f"{output_dir}/subs.txt"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     
     print(f"{Fore.BLUE}[*] Listing subdomains using subfinder...{Style.RESET_ALL}")
     subfinder_output = subprocess.run(["subfinder", "-d", domain, "-silent"], stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.decode()
-    append_unique(f"{output_dir}/subs.txt", subfinder_output)
+    append_unique(subdomains_path, subfinder_output)
 
-    with open(f"{output_dir}/subs.txt", "r") as file:
-        subs_content = sorted(set(file.read().splitlines()))
-    with open(f"{output_dir}/subs.txt", "w") as file:
-        file.write("\n".join(subs_content))
+    print(f"{Fore.BLUE}[*] Listing subdomains using Amass...{Style.RESET_ALL}")
+    amass_output = subprocess.run(["amass", "enum", "-d", domain], stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.decode()
+    append_unique(subdomains_path, amass_output)
+    
+    with open(subdomains_path, "r") as file:
+        unique_subs = sorted(set(line.strip() for line in file if line.strip()))
+    with open(subdomains_path, "w") as file:
+        file.write("\n".join(unique_subs))
+
+    print(f"{Fore.GREEN}[+] Total unique subdomains found: {len(unique_subs)}{Style.RESET_ALL}")
 
 # Check live subdomains
 def check_live_subdomains(subdomains_file):
