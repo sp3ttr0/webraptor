@@ -34,9 +34,7 @@ def is_valid_domain(domain):
 
 
 def check_tool(tool):
-    return shutil.which(tool) is not None and subprocess.run([tool],
-                                                             stdout=subprocess.DEVNULL,
-                                                             stderr=subprocess.DEVNULL).returncode == 0
+    return shutil.which(tool) is not None 
 
 
 def append_unique(filename, new_content):
