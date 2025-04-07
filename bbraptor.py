@@ -116,7 +116,7 @@ def run_eyewitness(live_subdomains, output_dir):
             f.write(f"https://{sub}\n")
 
     try:
-        subprocess.run(["EyeWitness", "--web", "-f", str(url_list_file),
+        subprocess.run(["eyewitness", "--web", "-f", str(url_list_file),
                         "-d", str(eyewitness_dir), "--no-prompt"],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(f"{Fore.GREEN}[+] EyeWitness completed. Results in {eyewitness_dir}{Style.RESET_ALL}")
