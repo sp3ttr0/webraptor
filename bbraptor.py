@@ -156,7 +156,7 @@ def main():
         print(f"{Fore.RED}[-] Invalid domain: {domain}{Style.RESET_ALL}")
         sys.exit(1)
 
-    for tool in ["sublist3r", "subfinder", "dirsearch", "nuclei", "EyeWitness"]:
+    for tool in ["sublist3r", "subfinder", "dirsearch", "nuclei", "eyewitness"]:
         if not check_tool(tool):
             print(f"{Fore.RED}[-] Missing tool: {tool}{Style.RESET_ALL}")
             sys.exit(1)
