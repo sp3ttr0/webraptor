@@ -123,7 +123,7 @@ def run_eyewitness(live_subdomains, output_dir):
 
 
 def run_nuclei(live_subdomains_file, output_dir, template=None):
-    print(f"{Fore.BLUE}[*] Running Nuclei scans...{Style.RESET_ALL}")
+    print(f"{Fore.BLUE}[*] Running Nuclei...{Style.RESET_ALL}")
     output_file = output_dir / "nuclei_results.txt"
 
     cmd = ["nuclei", "-l", str(live_subdomains_file), "-etags", "ssl,dns,security-headers",
