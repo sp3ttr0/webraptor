@@ -25,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
+
 def is_valid_domain(domain):
     pattern = r"^(?:[-A-Za-z0-9]+\.)+[A-Za-z]{2,}$"
     return re.match(pattern, domain) is not None
