@@ -33,6 +33,11 @@ def is_valid_domain(domain):
     return re.match(pattern, domain) is not None
 
 
+def extract_domain(url):
+    parsed = urlparse(url)
+    return parsed.netloc or parsed.path
+
+
 def check_tool(tool):
     return shutil.which(tool) is not None 
 
@@ -136,11 +141,6 @@ def run_nuclei(live_subdomains_file, output_dir, template=None):
         print(f"{Fore.GREEN}[+] Nuclei completed. Results saved to {output_file}{Style.RESET_ALL}")
     except subprocess.CalledProcessError:
         print(f"{Fore.RED}[-] Nuclei failed.{Style.RESET_ALL}")
-
-
-def extract_domain(url):
-    parsed = urlparse(url)
-    return parsed.netloc or parsed.path
 
 
 def main():
