@@ -5,10 +5,10 @@
 # ---------------------------------------------------------------
 # This script automates the bug bounty reconnaissance process,
 # performing subdomain enumeration, live subdomain checks,
-# and comprehensive scanning with tools such as Nmap, Nuclei,
-# and Dirsearch. It utilizes Python alongside powerful external
-# tools to help network administrators and pentesters identify
-# potential vulnerabilities in target domains.
+# and comprehensive scanning with tools such as Eyewitness, 
+# Dirsearch, and Nuclei. It utilizes Python alongside powerful 
+# external tools to help network administrators and pentesters 
+# identify potential vulnerabilities in target domains.
 #
 # Author: Howell King Jr. | Github: https://github.com/sp3ttr0
 # ===============================================================
@@ -85,23 +85,40 @@ def check_live_subdomains(subdomains_file):
         return [sub for sub in executor.map(check, subdomains) if sub]
 
 
-def run_nmap(live_subdomains, output_dir):
-    print(f"{Fore.BLUE}[*] Running Nmap scans...{Style.RESET_ALL}")
-    nmap_dir = output_dir / "nmap_results"
-    nmap_dir.mkdir(parents=True, exist_ok=True)
+def run_dirsearch(live_subdomains, output_dir):
+    print(f"{Fore.BLUE}[*] Running Dirsearch...{Style.RESET_ALL}")
+    dirsearch_dir = output_dir / "dirsearch_results"
+    dirsearch_dir.mkdir(parents=True, exist_ok=True)
 
-    def scan(target):
-        out_file = nmap_dir / f"{target}.txt"
-        try:
-            subprocess.run(["nmap", "-n", "-sV", "--script", "http*", "--min-rate", "1000",
-                            "-T4", "-oN", str(out_file), target], check=True,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print(f"{Fore.GREEN}[+] Nmap completed for {target}{Style.RESET_ALL}")
-        except subprocess.CalledProcessError:
-            print(f"{Fore.RED}[-] Nmap failed for {target}{Style.RESET_ALL}")
+    def scan(sub):
+        out_file = dirsearch_dir / f"{sub}.txt"
+        subprocess.run(["dirsearch", "-u", f"https://{sub}",
+                        "-i", "200,204,403,443", "-x", "500,502,429,581,503",
+                        "-R", "5", "--random-agent", "-t", "50", "-F", "-o", str(out_file)],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"{Fore.GREEN}[+] Dirsearch completed for {sub}{Style.RESET_ALL}")
 
     with ThreadPoolExecutor() as executor:
         executor.map(scan, live_subdomains)
+
+
+def run_eyewitness(live_subdomains, output_dir):
+    print(f"{Fore.BLUE}[*] Running EyeWitness...{Style.RESET_ALL}")
+    eyewitness_dir = output_dir / "eyewitness"
+    url_list_file = output_dir / "eyewitness_urls.txt"
+
+    # Write https:// URLs to file
+    with url_list_file.open("w") as f:
+        for sub in live_subdomains:
+            f.write(f"https://{sub}\n")
+
+    try:
+        subprocess.run(["EyeWitness", "--web", "-f", str(url_list_file),
+                        "-d", str(eyewitness_dir), "--no-prompt"],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"{Fore.GREEN}[+] EyeWitness completed. Results in {eyewitness_dir}{Style.RESET_ALL}")
+    except subprocess.CalledProcessError:
+        print(f"{Fore.RED}[-] EyeWitness failed.{Style.RESET_ALL}")
 
 
 def run_nuclei(live_subdomains_file, output_dir, template=None):
@@ -118,23 +135,6 @@ def run_nuclei(live_subdomains_file, output_dir, template=None):
         print(f"{Fore.GREEN}[+] Nuclei completed. Results saved to {output_file}{Style.RESET_ALL}")
     except subprocess.CalledProcessError:
         print(f"{Fore.RED}[-] Nuclei failed.{Style.RESET_ALL}")
-
-
-def run_dirsearch(live_subdomains, output_dir):
-    print(f"{Fore.BLUE}[*] Running Dirsearch...{Style.RESET_ALL}")
-    dirsearch_dir = output_dir / "dirsearch_results"
-    dirsearch_dir.mkdir(parents=True, exist_ok=True)
-
-    def scan(sub):
-        out_file = dirsearch_dir / f"{sub}.txt"
-        subprocess.run(["dirsearch", "-u", f"https://{sub}",
-                        "-i", "200,204,403,443", "-x", "500,502,429,581,503",
-                        "-R", "5", "--random-agent", "-t", "50", "-F", "-o", str(out_file)],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        print(f"{Fore.GREEN}[+] Dirsearch completed for {sub}{Style.RESET_ALL}")
-
-    with ThreadPoolExecutor() as executor:
-        executor.map(scan, live_subdomains)
 
 
 def extract_domain(url):
@@ -155,7 +155,7 @@ def main():
         print(f"{Fore.RED}[-] Invalid domain: {domain}{Style.RESET_ALL}")
         sys.exit(1)
 
-    for tool in ["sublist3r", "subfinder", "nmap", "nuclei", "dirsearch"]:
+    for tool in ["sublist3r", "subfinder", "dirsearch", "nuclei", "EyeWitness"]:
         if not check_tool(tool):
             print(f"{Fore.RED}[-] Missing tool: {tool}{Style.RESET_ALL}")
             sys.exit(1)
@@ -174,8 +174,8 @@ def main():
     live_file = base_output / "subs_live.txt"
     live_file.write_text("\n".join(live_subs) + "\n")
 
-    run_nmap(live_subs, base_output)
     run_dirsearch(live_subs, base_output)
+    run_eyewitness(live_subs, base_output)
     run_nuclei(live_file, base_output, args.nuclei_template)
 
     print(f"{Fore.GREEN}[+] Scan completed. Results in {base_output}{Style.RESET_ALL}")
