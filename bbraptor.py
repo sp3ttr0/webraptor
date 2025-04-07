@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+
 # ===============================================================
 # Bug Bounty Raptor - Automated Bug Bounty Scanning Script
 # ---------------------------------------------------------------
@@ -12,6 +13,7 @@
 #
 # Author: Howell King Jr. | Github: https://github.com/sp3ttr0
 # ===============================================================
+
 
 import subprocess
 import sys
