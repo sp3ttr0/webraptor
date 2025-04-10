@@ -5,8 +5,8 @@
 # Bug Bounty Raptor - Automated Bug Bounty Scanning Script
 # ---------------------------------------------------------------
 # This script automates the bug bounty reconnaissance process,
-# performing subdomain enumeration, live subdomain checks, port
-# scanning and scanning with tools such as Eyewitness, 
+# performing subdomain enumeration, live subdomain checks
+# and comprehensive scanning tools such as NMAP, Eyewitness, 
 # Dirsearch, and Nuclei. It utilizes Python alongside powerful 
 # external tools to help network administrators and pentesters 
 # identify potential vulnerabilities in target domains.
@@ -95,29 +95,21 @@ def check_live_subdomains(subdomains_file):
         return [sub for sub in executor.map(check, subdomains) if sub]
 
 
-def run_port_scanner(subdomains, output_dir, ports=None):
-    print(f"{Fore.BLUE}[*] Scanning ports...{Style.RESET_ALL}")
-    ports = ports or [21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 8080, 8443]
+def run_nmap(subdomains, output_dir):
+    print(f"{Fore.BLUE}[*] Running Nmap...{Style.RESET_ALL}")
     portscan_dir = output_dir / "portscan_results"
     portscan_dir.mkdir(parents=True, exist_ok=True)
 
     def scan(sub):
-        open_ports = []
-        for port in ports:
-            try:
-                sock = socket.create_connection((sub, port), timeout=2)
-                open_ports.append(port)
-                sock.close()
-            except (socket.timeout, ConnectionRefusedError, OSError):
-                continue
-
         out_file = portscan_dir / f"{sub}.txt"
-        if open_ports:
-            out_file.write_text("\n".join(str(p) for p in open_ports))
-            print(f"{Fore.GREEN}[+] Open ports for {sub}: {open_ports}{Style.RESET_ALL}")
-        else:
-            out_file.write_text("No open ports found.\n")
-            print(f"{Fore.YELLOW}[-] No open ports found for {sub}{Style.RESET_ALL}")
+        try:
+            result = subprocess.run(["nmap", "-sV", "--top-ports", "3000", "-T4", "-Pn", sub],
+                                    capture_output=True, text=True, check=True)
+            out_file.write_text(result.stdout)
+            print(f"{Fore.GREEN}[+] Nmap scan completed for {sub}{Style.RESET_ALL}")
+        except subprocess.CalledProcessError:
+            out_file.write_text("Nmap scan failed.\n")
+            print(f"{Fore.RED}[-] Nmap scan failed for {sub}{Style.RESET_ALL}")
 
     with ThreadPoolExecutor() as executor:
         executor.map(scan, subdomains)
@@ -189,7 +181,7 @@ def main():
         print(f"{Fore.RED}[-] Invalid domain: {domain}{Style.RESET_ALL}")
         sys.exit(1)
 
-    for tool in ["sublist3r", "subfinder", "dirsearch", "nuclei", "eyewitness"]:
+    for tool in ["sublist3r", "subfinder", "dirsearch", "nuclei", "eyewitness", "nmap"]:
         if not check_tool(tool):
             print(f"{Fore.RED}[-] Missing tool: {tool}{Style.RESET_ALL}")
             sys.exit(1)
@@ -208,11 +200,13 @@ def main():
     live_file = base_output / "subs_live.txt"
     live_file.write_text("\n".join(live_subs) + "\n")
 
-    run_port_scanner(live_subs, base_output)
+    
+    run_nmap(live_subs, base_output)
     run_eyewitness(live_subs, base_output)
     run_dirsearch(live_subs, base_output, args.threads)
     run_nuclei(live_file, base_output, args.nuclei_template)
 
+    
     print(f"{Fore.GREEN}[+] Scan completed. Results in {base_output}{Style.RESET_ALL}")
 
 
