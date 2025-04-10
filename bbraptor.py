@@ -5,8 +5,8 @@
 # Bug Bounty Raptor - Automated Bug Bounty Scanning Script
 # ---------------------------------------------------------------
 # This script automates the bug bounty reconnaissance process,
-# performing subdomain enumeration, live subdomain checks,
-# and comprehensive scanning with tools such as Eyewitness, 
+# performing subdomain enumeration, live subdomain checks, port
+# scanning and scanning with tools such as Eyewitness, 
 # Dirsearch, and Nuclei. It utilizes Python alongside powerful 
 # external tools to help network administrators and pentesters 
 # identify potential vulnerabilities in target domains.
@@ -78,11 +78,15 @@ def check_live_subdomains(subdomains_file):
     def check(sub):
         try:
             with httpx.Client(timeout=10.0, follow_redirects=True) as client:
-                response = client.get(f"https://{sub}")
-                if response.status_code < 400:
-                    print(f"{Fore.GREEN}[+] Live: {sub}{Style.RESET_ALL}")
-                    return sub
-        except httpx.RequestError:
+                for scheme in ["https://", "http://"]:
+                    try:
+                        response = client.get(f"{scheme}{sub}")
+                        if response.status_code < 400:
+                            print(f"{Fore.GREEN}[+] Live: {scheme}{sub}{Style.RESET_ALL}")
+                            return sub
+                    except httpx.RequestError:
+                        continue
+        except Exception:
             pass
         return None
 
@@ -91,7 +95,35 @@ def check_live_subdomains(subdomains_file):
         return [sub for sub in executor.map(check, subdomains) if sub]
 
 
-def run_dirsearch(live_subdomains, output_dir):
+def run_port_scanner(subdomains, output_dir, ports=None):
+    print(f"{Fore.BLUE}[*] Scanning ports...{Style.RESET_ALL}")
+    ports = ports or [21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 8080, 8443]
+    portscan_dir = output_dir / "portscan_results"
+    portscan_dir.mkdir(parents=True, exist_ok=True)
+
+    def scan(sub):
+        open_ports = []
+        for port in ports:
+            try:
+                sock = socket.create_connection((sub, port), timeout=2)
+                open_ports.append(port)
+                sock.close()
+            except (socket.timeout, ConnectionRefusedError, OSError):
+                continue
+
+        out_file = portscan_dir / f"{sub}.txt"
+        if open_ports:
+            out_file.write_text("\n".join(str(p) for p in open_ports))
+            print(f"{Fore.GREEN}[+] Open ports for {sub}: {open_ports}{Style.RESET_ALL}")
+        else:
+            out_file.write_text("No open ports found.\n")
+            print(f"{Fore.YELLOW}[-] No open ports found for {sub}{Style.RESET_ALL}")
+
+    with ThreadPoolExecutor() as executor:
+        executor.map(scan, subdomains)
+
+
+def run_dirsearch(live_subdomains, output_dir, threads):
     print(f"{Fore.BLUE}[*] Running Dirsearch...{Style.RESET_ALL}")
     dirsearch_dir = output_dir / "dirsearch_results"
     dirsearch_dir.mkdir(parents=True, exist_ok=True)
@@ -104,7 +136,7 @@ def run_dirsearch(live_subdomains, output_dir):
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(f"{Fore.GREEN}[+] Dirsearch completed for {sub}{Style.RESET_ALL}")
 
-    with ThreadPoolExecutor() as executor:
+    with ThreadPoolExecutor(max_workers=threads) as executor:
         executor.map(scan, live_subdomains)
 
 
@@ -148,6 +180,7 @@ def main():
     parser.add_argument("target", help="Target domain or URL")
     parser.add_argument("--output-dir", default="results", help="Output directory")
     parser.add_argument("--nuclei-template", help="Custom Nuclei template path")
+    parser.add_argument("--threads", type=int, default=10, help="Max concurrent threads")
     args = parser.parse_args()
 
     domain = extract_domain(args.target)
@@ -175,8 +208,9 @@ def main():
     live_file = base_output / "subs_live.txt"
     live_file.write_text("\n".join(live_subs) + "\n")
 
-    run_dirsearch(live_subs, base_output)
+    run_port_scanner(live_subs, base_output)
     run_eyewitness(live_subs, base_output)
+    run_dirsearch(live_subs, base_output, args.threads)
     run_nuclei(live_file, base_output, args.nuclei_template)
 
     print(f"{Fore.GREEN}[+] Scan completed. Results in {base_output}{Style.RESET_ALL}")
