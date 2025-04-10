@@ -51,7 +51,7 @@ def print_banner():
     ⠀⠀⠀⠀⠀⠀⠈⣉⡙⠒⢚⣒⠚⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠙⣿⡧⠻⠤⠿⡷⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
     
         Bug Bounty Raptor 🦖 — Hunt Smarter, Not Harder
-        Author: Howell King Jr. | https://github.com/sp3ttr0
+                        by sp3ttr0
     """
     print(f"{Fore.CYAN}{banner}{Style.RESET_ALL}")
 
