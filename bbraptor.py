@@ -124,9 +124,13 @@ def run_dirsearch(live_subdomains, output_dir, threads):
 
     def scan(sub):
         out_file = dirsearch_dir / f"{sub}.txt"
-        subprocess.run(["dirsearch", "-u", f"https://{sub}",
+        subprocess.run(["dirsearch", 
+                        "-u", f"https://{sub}",
                         "-i", "200,204,403,443", "-x", "500,502,429,581,503",
-                        "-R", "5", "--random-agent", "-t", "50", "-F", "-o", str(out_file)],
+                        "--deep-recursive", "--force-recursive",
+                        '-e', "conf,config,bak,backup,swp,old,db,sql,asp,aspx,aspx~,asp~,py,py~,rb,rb~,php,php~,bak,bkp,cache,cgi,conf,csv,html,inc,jar,js,json,jsp,jsp~,lock,log,rar,old.sql,sql.gz,sql.zip,sql.tar.gz,sql~,swp,swp~,tar,tar.bz2,tar.gz,txt,wadl,zip,log,xml",
+                        "-R", "5", "--random-agent", "--exclude-sizes=0B", "-t", "50", "-F", 
+                        "-o", str(out_file)],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(f"{Fore.GREEN}[+] Dirsearch completed for {sub}. Results in {out_file}{Style.RESET_ALL}")
 
@@ -160,7 +164,7 @@ def run_nuclei(live_subdomains_file, output_dir, template=None):
     cmd = [
         "nuclei", 
         "-l", str(live_subdomains_file), 
-        "-etags", "ssl,dns,http-missing-security-headers", 
+        "-etags", "ssl,dns,security-headers", 
         "-severity", "medium,high,critical",
         "-silent", 
         "-o", str(output_file)
