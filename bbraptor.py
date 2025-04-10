@@ -97,7 +97,7 @@ def check_live_subdomains(subdomains_file):
 
 def run_nmap(subdomains, output_dir):
     print(f"{Fore.BLUE}[*] Running Nmap...{Style.RESET_ALL}")
-    portscan_dir = output_dir / "portscan_results"
+    portscan_dir = output_dir / "nmap_results"
     portscan_dir.mkdir(parents=True, exist_ok=True)
 
     def scan(sub):
@@ -106,7 +106,7 @@ def run_nmap(subdomains, output_dir):
             result = subprocess.run(["nmap", "-sV", "--top-ports", "3000", "-T4", "-Pn", sub],
                                     capture_output=True, text=True, check=True)
             out_file.write_text(result.stdout)
-            print(f"{Fore.GREEN}[+] Nmap scan completed for {sub}{Style.RESET_ALL}")
+            print(f"{Fore.GREEN}[+] Nmap scan completed for {sub}. Results in {out_file}{Style.RESET_ALL}")
         except subprocess.CalledProcessError:
             out_file.write_text("Nmap scan failed.\n")
             print(f"{Fore.RED}[-] Nmap scan failed for {sub}{Style.RESET_ALL}")
@@ -126,7 +126,7 @@ def run_dirsearch(live_subdomains, output_dir, threads):
                         "-i", "200,204,403,443", "-x", "500,502,429,581,503",
                         "-R", "5", "--random-agent", "-t", "50", "-F", "-o", str(out_file)],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        print(f"{Fore.GREEN}[+] Dirsearch completed for {sub}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}[+] Dirsearch completed for {sub}. Results in {out_file}{Style.RESET_ALL}")
 
     with ThreadPoolExecutor(max_workers=threads) as executor:
         executor.map(scan, live_subdomains)
