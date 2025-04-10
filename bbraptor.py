@@ -92,8 +92,10 @@ def check_live_subdomains(subdomains_file):
 
     subdomains = Path(subdomains_file).read_text().splitlines()
     with ThreadPoolExecutor() as executor:
-        return [sub for sub in executor.map(check, subdomains) if sub]
+        live = [sub for sub in executor.map(check, subdomains) if sub]
 
+    print(f"{Fore.GREEN}[+] Total live subdomains: {len(live)}{Style.RESET_ALL}")
+    return live
 
 def run_nmap(subdomains, output_dir):
     print(f"{Fore.BLUE}[*] Running Nmap...{Style.RESET_ALL}")
