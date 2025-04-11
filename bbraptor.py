@@ -53,7 +53,7 @@ def print_banner():
         Bug Bounty Raptor 🦖 — Hunt Smarter, Not Harder
                         by sp3ttr0
     """
-    print(f"{Fore.CYAN}{banner}{Style.RESET_ALL}")
+    print(f"{Fore.LIGHTYELLOW_EX}{banner}{Style.RESET_ALL}")
 
 
 
