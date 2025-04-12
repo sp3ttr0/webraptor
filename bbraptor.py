@@ -50,9 +50,9 @@ def print_banner():
     ⠀⠀⠀⠀⠀⠀⢰⣟⢻⠋⢿⠭⠋⡾⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⢴⣿⣰⠀⡎⠣⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
     ⠀⠀⠀⠀⠀⠀⠈⣉⡙⠒⢚⣒⠚⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠙⣿⡧⠻⠤⠿⡷⠀ by sp3ttr0⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
     
-        Bug Bounty Raptor 🦖 — Hunt Smarter, Not Harder
+    Bug Bounty Raptor 🦖 — Hunt Smarter, Not Harder
     """
-    print(f"{Fore.LIGHTYELLOW_EX}{banner}{Style.RESET_ALL}")
+    print(f"{Fore.LIGHTBLUE_EX}{banner}{Style.RESET_ALL}")
 
 
 
