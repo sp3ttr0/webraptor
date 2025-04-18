@@ -61,11 +61,6 @@ def is_valid_domain(domain):
     return re.match(pattern, domain) is not None
 
 
-def extract_domain(url):
-    parsed = urlparse(url)
-    return parsed.netloc or parsed.path
-
-
 def check_tool(tool):
     return shutil.which(tool) is not None 
 
@@ -210,16 +205,16 @@ def run_nuclei(live_subdomains_file, output_dir, template=None):
 def main():
     print_banner()
     parser = argparse.ArgumentParser(description="Bug Bounty Raptor")
-    parser.add_argument("target", help="Target domain or URL")
+    parser.add_argument("target", help="Target domain (e.g. example.com)")
     parser.add_argument("--output-dir", default="results", help="Output directory")
     parser.add_argument("--nuclei-template", help="Custom Nuclei template path")
     parser.add_argument("--threads", type=int, default=10, help="Max concurrent threads")
     args = parser.parse_args()
 
-    domain = extract_domain(args.target)
+    domain = args.target.strip().lower()
 
     if not is_valid_domain(domain):
-        print(f"{Fore.RED}[-] Invalid domain: {domain}{Style.RESET_ALL}")
+        print(f"{Fore.RED}[-] Invalid domain format: {domain}{Style.RESET_ALL}")
         sys.exit(1)
 
     for tool in ["sublist3r", "subfinder", "dirsearch", "nuclei", "eyewitness", "nmap"]:
@@ -241,13 +236,11 @@ def main():
     live_file = base_output / "subs_live.txt"
     live_file.write_text("\n".join(live_subs) + "\n")
 
-    
     run_nmap(live_subs, base_output)
     run_eyewitness(live_subs, base_output)
     run_dirsearch(live_subs, base_output, args.threads)
     run_nuclei(live_file, base_output, args.nuclei_template)
 
-    
     print(f"{Fore.GREEN}[+] Scan completed. Results in {base_output}{Style.RESET_ALL}")
 
 
