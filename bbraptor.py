@@ -156,7 +156,6 @@ def run_dirsearch(live_subdomains, output_dir, threads):
                         "-u", f"https://{sub}",
                         "-i", "200,204,403,443", "-x", "500,502,429,581,503",
                         "--deep-recursive", "--force-recursive",
-                        '-e', "conf,config,bak,backup,swp,old,db,sql,asp,aspx,aspx~,asp~,py,py~,rb,rb~,php,php~,bak,bkp,cache,cgi,conf,csv,html,inc,jar,js,json,jsp,jsp~,lock,log,rar,old.sql,sql.gz,sql.zip,sql.tar.gz,sql~,swp,swp~,tar,tar.bz2,tar.gz,txt,wadl,zip,log,xml",
                         "-R", "5", "--random-agent", "--exclude-sizes=0B", "-t", "50", "-F", 
                         "-o", str(out_file)],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
