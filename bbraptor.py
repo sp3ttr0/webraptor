@@ -128,7 +128,7 @@ def run_nmap(subdomains, output_dir):
     def scan(sub):
         out_file = portscan_dir / f"{sub}.txt"
         try:
-            result = subprocess.run(["nmap", "-sV", "--top-ports", "3000", "-T4", "-Pn", sub],
+            result = subprocess.run(["nmap", "-sV", "--top-ports", "3000", "-T4", "--min-rate", "1000", "-Pn", sub],
                                     capture_output=True, text=True, check=True)
             out_file.write_text(result.stdout)
             print(f"{Fore.GREEN}[+] Nmap scan completed for {sub}. Results in {out_file}{Style.RESET_ALL}")
