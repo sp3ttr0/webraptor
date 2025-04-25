@@ -52,7 +52,7 @@ def print_banner():
     
     Bug Bounty Raptor 🦖 — Hunt Smarter, Not Harder
     """
-    print(f"{Fore.RED}{banner}{Style.RESET_ALL}")
+    print(f"{Style.BRIGHT + Fore.RED}{banner}{Style.RESET_ALL}")
 
 
 
