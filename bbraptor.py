@@ -20,13 +20,13 @@ import sys
 import shutil
 import re
 import httpx
-import argparse
-import logging
-import signal
 from urllib.parse import urlparse
 from colorama import Fore, Style
+import argparse
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import logging
+import signal
 
 
 def print_banner():
@@ -68,12 +68,9 @@ def setup_logging(log_file):
     )
 
 
-def handle_interrupt(signal_received, frame):
-    print(f"\n{Fore.YELLOW}[!] Interrupt received. Shutting down...{Style.RESET_ALL}")
-    logging.warning("User interrupted execution.")
+def handle_sigint(signal_received, frame):
+    logging.warning("[!] Ctrl+C detected. Exiting gracefully...")
     sys.exit(0)
-
-signal.signal(signal.SIGINT, handle_interrupt)
 
 
 def is_valid_domain(domain):
@@ -242,6 +239,8 @@ def main():
     parser.add_argument("--threads", type=int, default=10, help="Max concurrent threads")
     args = parser.parse_args()
 
+    signal.signal(signal.SIGINT, handle_sigint)
+
     domain = args.target.strip().lower()
 
     if not is_valid_domain(domain):
@@ -251,21 +250,30 @@ def main():
     for tool in ["sublist3r", "subfinder", "dirsearch", "nuclei", "eyewitness", "nmap"]:
         if not check_tool(tool):
             print(f"{Fore.RED}[-] Missing tool: {tool}{Style.RESET_ALL}")
-            logging.error(f"Missing tool: {tool}")
             sys.exit(1)
 
     base_output = Path(args.output_dir) / domain
+    base_output.mkdir(parents=True, exist_ok=True)
+
+    # Setup logging AFTER directory exists
     log_file = base_output / "recon.log"
-    setup_logging(log_file)
-    logging.info(f"Starting reconnaissance on {domain}")
-    print(f"{Fore.BLUE}[*] Starting reconnaissance on {domain}{Style.RESET_ALL}")
+    logging.basicConfig(
+        filename=log_file,
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+    )
+    console = logging.StreamHandler()
+    console.setLevel(logging.INFO)
+    console.setFormatter(logging.Formatter("%(message)s"))
+    logging.getLogger().addHandler(console)
+
+    logging.info(f"[*] Starting reconnaissance on {domain}")
 
     list_subdomains(domain, base_output)
     live_subs = check_live_subdomains(base_output / "subs.txt")
 
     if not live_subs:
-        print(f"{Fore.YELLOW}[!] No live subdomains found. Exiting.{Style.RESET_ALL}")
-        logging.warning("No live subdomains found")
+        logging.warning("[!] No live subdomains found. Exiting.")
         sys.exit(0)
 
     live_file = base_output / "subs_live.txt"
@@ -276,8 +284,7 @@ def main():
     run_dirsearch(live_subs, base_output, args.threads)
     run_nuclei(live_file, base_output, args.nuclei_template)
 
-    print(f"{Fore.GREEN}[+] Scan completed. Results in {base_output}{Style.RESET_ALL}")
-    logging.info("Scan completed successfully")
-
+    logging.info(f"[+] Scan completed. Results in {base_output}")
+    
 if __name__ == "__main__":
     main()
