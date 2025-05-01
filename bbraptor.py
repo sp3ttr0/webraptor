@@ -230,14 +230,15 @@ def run_nuclei(live_subdomains_file, output_dir, template=None):
         logging.error("[-] Nuclei failed.")
 
 def main():
+
+    signal.signal(signal.SIGINT, handle_sigint)
+    
     parser = argparse.ArgumentParser(description="Bug Bounty Raptor")
     parser.add_argument("target", help="Target domain (e.g. example.com)")
     parser.add_argument("--output-dir", default="results", help="Output directory")
     parser.add_argument("--nuclei-template", help="Custom Nuclei template path")
     parser.add_argument("--threads", type=int, default=10, help="Max concurrent threads")
     args = parser.parse_args()
-
-    signal.signal(signal.SIGINT, handle_sigint)
 
     domain = args.target.strip().lower()
     
@@ -246,16 +247,8 @@ def main():
 
     # Setup logging AFTER directory exists
     log_file = base_output / "recon.log"
-    logging.basicConfig(
-        filename=log_file,
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-    )
+    setup_logging(log_file)
 
-    console = logging.StreamHandler()
-    console.setLevel(logging.INFO)
-    console.setFormatter(logging.Formatter("%(message)s"))
-    logging.getLogger().addHandler(console)
 
     print_banner()
 
