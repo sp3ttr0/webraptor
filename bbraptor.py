@@ -20,9 +20,11 @@ import sys
 import shutil
 import re
 import httpx
+import argparse
+import logging
+import signal
 from urllib.parse import urlparse
 from colorama import Fore, Style
-import argparse
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -55,6 +57,24 @@ def print_banner():
     print(f"{Fore.CYAN}{banner}{Style.RESET_ALL}")
 
 
+def setup_logging(log_file):
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+
+
+def handle_interrupt(signal_received, frame):
+    print(f"\n{Fore.YELLOW}[!] Interrupt received. Shutting down...{Style.RESET_ALL}")
+    logging.warning("User interrupted execution.")
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, handle_interrupt)
+
 
 def is_valid_domain(domain):
     pattern = r"^(?:[-A-Za-z0-9]+\.)+[A-Za-z]{2,}$"
@@ -78,14 +98,17 @@ def append_unique(filename, new_content):
 
 def list_subdomains(domain, output_dir):
     print(f"{Fore.BLUE}[*] Finding subdomains...{Style.RESET_ALL}")
+    logging.info("Finding subdomains")
     output_dir.mkdir(parents=True, exist_ok=True)
     subdomains_path = output_dir / "subs.txt"
 
     print(f"{Fore.BLUE}[*] Listing subdomains using sublist3r...{Style.RESET_ALL}")
+    logging.info("Running sublist3r")
     subprocess.run(["sublist3r", "-d", domain, "-o", str(subdomains_path)],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     print(f"{Fore.BLUE}[*] Listing subdomains using subfinder...{Style.RESET_ALL}")
+    logging.info("Running subfinder")
     subfinder_output = subprocess.run(["subfinder", "-d", domain, "-silent"],
                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode()
     append_unique(subdomains_path, subfinder_output)
@@ -93,10 +116,11 @@ def list_subdomains(domain, output_dir):
     unique_subs = sorted(set(subdomains_path.read_text().splitlines()))
     subdomains_path.write_text("\n".join(unique_subs) + "\n")
     print(f"{Fore.GREEN}[+] Total unique subdomains found: {len(unique_subs)}{Style.RESET_ALL}")
-
+    logging.info(f"Total unique subdomains found: {len(unique_subs)}")
 
 def check_live_subdomains(subdomains_file):
     print(f"{Fore.BLUE}[*] Checking live subdomains...{Style.RESET_ALL}")
+    logging.info("Checking live subdomains")
 
     def check(sub):
         try:
@@ -118,10 +142,12 @@ def check_live_subdomains(subdomains_file):
         live = [sub for sub in executor.map(check, subdomains) if sub]
 
     print(f"{Fore.GREEN}[+] Total live subdomains: {len(live)}{Style.RESET_ALL}")
+    logging.info(f"Total live subdomains: {len(live)}")
     return live
 
 def run_nmap(subdomains, output_dir):
     print(f"{Fore.BLUE}[*] Running Nmap...{Style.RESET_ALL}")
+    logging.info("Running Nmap scans")
     portscan_dir = output_dir / "nmap_results"
     portscan_dir.mkdir(parents=True, exist_ok=True)
 
@@ -131,17 +157,19 @@ def run_nmap(subdomains, output_dir):
             result = subprocess.run(["nmap", "-sV", "--top-ports", "3000", "-T4", "--min-rate", "1000", "-Pn", sub],
                                     capture_output=True, text=True, check=True)
             out_file.write_text(result.stdout)
-            print(f"{Fore.GREEN}[+] Nmap scan completed for {sub}. Results in {out_file}{Style.RESET_ALL}")
+            print(f"{Fore.GREEN}[+] Nmap scan completed for {sub}{Style.RESET_ALL}")
+            logging.info(f"Nmap scan completed for {sub}")
         except subprocess.CalledProcessError:
             out_file.write_text("Nmap scan failed.\n")
             print(f"{Fore.RED}[-] Nmap scan failed for {sub}{Style.RESET_ALL}")
+            logging.error(f"Nmap scan failed for {sub}")
 
     with ThreadPoolExecutor() as executor:
         executor.map(scan, subdomains)
 
-
 def run_dirsearch(live_subdomains, output_dir, threads):
     print(f"{Fore.BLUE}[*] Running Dirsearch...{Style.RESET_ALL}")
+    logging.info("Running Dirsearch")
     dirsearch_dir = output_dir / "dirsearch_results"
     dirsearch_dir.mkdir(parents=True, exist_ok=True)
 
@@ -154,18 +182,18 @@ def run_dirsearch(live_subdomains, output_dir, threads):
                         "-R", "5", "--random-agent", "--exclude-sizes=0B", "-t", "50", "-F", 
                         "-o", str(out_file)],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        print(f"{Fore.GREEN}[+] Dirsearch completed for {sub}. Results in {out_file}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}[+] Dirsearch completed for {sub}{Style.RESET_ALL}")
+        logging.info(f"Dirsearch completed for {sub}")
 
     with ThreadPoolExecutor(max_workers=threads) as executor:
         executor.map(scan, live_subdomains)
 
-
 def run_eyewitness(live_subdomains, output_dir):
     print(f"{Fore.BLUE}[*] Running EyeWitness...{Style.RESET_ALL}")
+    logging.info("Running EyeWitness")
     eyewitness_dir = output_dir / "eyewitness"
     url_list_file = output_dir / "eyewitness_urls.txt"
 
-    # Write https:// URLs to file
     with url_list_file.open("w") as f:
         for sub in live_subdomains:
             f.write(f"https://{sub}\n")
@@ -175,12 +203,14 @@ def run_eyewitness(live_subdomains, output_dir):
                         "-d", str(eyewitness_dir), "--no-prompt"],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(f"{Fore.GREEN}[+] EyeWitness completed. Results in {eyewitness_dir}{Style.RESET_ALL}")
+        logging.info("EyeWitness completed")
     except subprocess.CalledProcessError:
         print(f"{Fore.RED}[-] EyeWitness failed.{Style.RESET_ALL}")
-
+        logging.error("EyeWitness failed")
 
 def run_nuclei(live_subdomains_file, output_dir, template=None):
     print(f"{Fore.BLUE}[*] Running Nuclei...{Style.RESET_ALL}")
+    logging.info("Running Nuclei")
     output_file = output_dir / "nuclei_results.txt"
 
     cmd = [
@@ -191,16 +221,17 @@ def run_nuclei(live_subdomains_file, output_dir, template=None):
         "-silent", 
         "-o", str(output_file)
     ]
-    
+
     if template:
         cmd.extend(["-t", template])
 
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(f"{Fore.GREEN}[+] Nuclei completed. Results saved to {output_file}{Style.RESET_ALL}")
+        logging.info("Nuclei completed")
     except subprocess.CalledProcessError:
         print(f"{Fore.RED}[-] Nuclei failed.{Style.RESET_ALL}")
-
+        logging.error("Nuclei failed")
 
 def main():
     print_banner()
@@ -220,10 +251,13 @@ def main():
     for tool in ["sublist3r", "subfinder", "dirsearch", "nuclei", "eyewitness", "nmap"]:
         if not check_tool(tool):
             print(f"{Fore.RED}[-] Missing tool: {tool}{Style.RESET_ALL}")
+            logging.error(f"Missing tool: {tool}")
             sys.exit(1)
 
     base_output = Path(args.output_dir) / domain
-
+    log_file = base_output / "recon.log"
+    setup_logging(log_file)
+    logging.info(f"Starting reconnaissance on {domain}")
     print(f"{Fore.BLUE}[*] Starting reconnaissance on {domain}{Style.RESET_ALL}")
 
     list_subdomains(domain, base_output)
@@ -231,6 +265,7 @@ def main():
 
     if not live_subs:
         print(f"{Fore.YELLOW}[!] No live subdomains found. Exiting.{Style.RESET_ALL}")
+        logging.warning("No live subdomains found")
         sys.exit(0)
 
     live_file = base_output / "subs_live.txt"
@@ -242,7 +277,7 @@ def main():
     run_nuclei(live_file, base_output, args.nuclei_template)
 
     print(f"{Fore.GREEN}[+] Scan completed. Results in {base_output}{Style.RESET_ALL}")
-
+    logging.info("Scan completed successfully")
 
 if __name__ == "__main__":
     main()
