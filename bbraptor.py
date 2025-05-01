@@ -124,6 +124,8 @@ def check_live_subdomains(subdomains_file):
                         if response.status_code < 400:
                             logging.info(f"{Fore.GREEN}[+] Live: {scheme}{sub}{Style.RESET_ALL}")
                             return sub
+                        else:
+                            logging.info(f"{Fore.RED}[+] {sub} returned {status}{Style.RESET_ALL}")
                     except httpx.RequestError:
                         continue
         except Exception:
