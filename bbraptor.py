@@ -172,7 +172,7 @@ def run_nmap(subdomains, output_dir):
         executor.map(scan, subdomains)
 
 def run_dirsearch(live_subdomains, output_dir, threads):
-    logging.info("*] Running Dirsearch...")
+    logging.info("[*] Running Dirsearch...")
     dirsearch_dir = output_dir / "dirsearch_results"
     dirsearch_dir.mkdir(parents=True, exist_ok=True)
 
