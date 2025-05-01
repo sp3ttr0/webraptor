@@ -21,7 +21,7 @@ import shutil
 import re
 import httpx
 from urllib.parse import urlparse
-from colorama import Fore, Style
+from colorama import Fore, Style, init
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
