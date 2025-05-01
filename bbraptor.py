@@ -137,7 +137,7 @@ def check_live_subdomains(subdomains_file):
                     try:
                         response = client.get(f"{scheme}{sub}")
                         if response.status_code < 400:
-                            print(f"{Fore.GREEN}[+] Live: {scheme}{sub}{Style.RESET_ALL}")
+                            logging.info(f"{Fore.GREEN}[+] Live: {scheme}{sub}{Style.RESET_ALL}")
                             return sub
                     except httpx.RequestError:
                         continue
