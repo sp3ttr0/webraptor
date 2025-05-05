@@ -6,7 +6,7 @@
 # ---------------------------------------------------------------
 # This script automates the bug bounty reconnaissance process,
 # performing subdomain enumeration, live subdomain checks
-# and comprehensive scanning tools such as NMAP, Eyewitness, 
+# and comprehensive scanning tools such as Eyewitness, 
 # Dirsearch, and Nuclei. It utilizes Python alongside powerful 
 # external tools to help network administrators and pentesters 
 # identify potential vulnerabilities in target domains.
@@ -138,25 +138,6 @@ def check_live_subdomains(subdomains_file):
     logging.info(f"{Fore.BLUE}[+] Total live subdomains: {len(live)}{Style.RESET_ALL}")
     return live
 
-def run_nmap(subdomains, output_dir):
-    logging.info(f"{Fore.BLUE}[*] Running Nmap...{Style.RESET_ALL}")
-    portscan_dir = output_dir / "nmap_results"
-    portscan_dir.mkdir(parents=True, exist_ok=True)
-
-    def scan(sub):
-        out_file = portscan_dir / f"{sub}.txt"
-        try:
-            result = subprocess.run(["nmap", "-sV", "--top-ports", "3000", "-T4", "--min-rate", "1000", "-Pn", sub],
-                                    capture_output=True, text=True, check=True)
-            out_file.write_text(result.stdout)
-            logging.info(f"{Fore.GREEN}[+] Nmap scan completed for {sub}")
-        except subprocess.CalledProcessError:
-            out_file.write_text("Nmap scan failed.\n")
-            logging.error(f"{Fore.RED}[-] Nmap scan failed for {sub}{Style.RESET_ALL}")
-
-    with ThreadPoolExecutor() as executor:
-        executor.map(scan, subdomains)
-
 def run_dirsearch(live_subdomains, output_dir, threads):
     logging.info(f"{Fore.BLUE}[*] Running Dirsearch...{Style.RESET_ALL}")
     dirsearch_dir = output_dir / "dirsearch_results"
@@ -242,7 +223,7 @@ def main():
         logging.error(f"{Fore.RED}[-] Invalid domain format: {domain}{Style.RESET_ALL}")
         sys.exit(1)
 
-    for tool in ["sublist3r", "subfinder", "dirsearch", "nuclei", "eyewitness", "nmap"]:
+    for tool in ["sublist3r", "subfinder", "dirsearch", "nuclei", "eyewitness"]:
         if not check_tool(tool):
             logging.error(f"{Fore.RED}[-] Missing tool: {tool}{Style.RESET_ALL}")
             sys.exit(1)
@@ -259,7 +240,6 @@ def main():
     live_file = base_output / "subs_live.txt"
     live_file.write_text("\n".join(live_subs) + "\n")
 
-    run_nmap(live_subs, base_output)
     run_eyewitness(live_subs, base_output)
     run_dirsearch(live_subs, base_output, args.threads)
     run_nuclei(live_file, base_output, args.nuclei_template)
