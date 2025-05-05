@@ -1,6 +1,6 @@
 # Bug Bounty Raptor
 
-Bug Bounty Raptor is an automated tool to streamline the bug bounty process by performing subdomain enumeration, checking for live subdomains, and running various scans, including Eyewitness, NMAP, Dirsearch, and Nuclei. The results are saved in organized directories for further analysis.
+Bug Bounty Raptor is an automated tool to streamline the bug bounty process by performing subdomain enumeration, checking for live subdomains, and running various scans, including Eyewitness, Dirsearch, and Nuclei. The results are saved in organized directories for further analysis.
 
 ## Features
 - Subdomain Enumeration
@@ -9,8 +9,6 @@ Bug Bounty Raptor is an automated tool to streamline the bug bounty process by p
   - Identifies active subdomains using HTTP requests.
 - Eyewitness
   - Captures website screenshots, provides server header information, and attempts to identify default credentials if available.
-- NMAP
-  - Performs port scanning on live subdomains.
 - Dirsearch
   - Performs directory brute-forcing on live subdomains.
 - Nuclei
@@ -23,7 +21,6 @@ Ensure the following tools are installed and available in your `PATH`:
 - [sublist3r](https://github.com/aboul3la/Sublist3r)
 - [subfinder](https://github.com/projectdiscovery/subfinder)
 - [eyewitness](https://github.com/RedSiege/EyeWitness)
-- [nmap](https://nmap.org/)
 - [dirsearch](https://github.com/maurosoria/dirsearch)
 - [nuclei](https://github.com/projectdiscovery/nuclei)
 
@@ -59,7 +56,6 @@ The script saves results in the following structure under the specified output d
       ├── subs.txt             # All discovered subdomains
       ├── subs_live.txt        # Live subdomains
       ├── eyewitness_results/  # Eyewitness for each live subdomain
-      ├── nmap_results/        # nmap for each live subdomain
       ├── dirsearch_results/   # Dirsearch results for each live subdomain
       └── nuclei_results.txt   # Nuclei scan results
 ```
