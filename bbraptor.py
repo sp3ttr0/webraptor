@@ -147,8 +147,7 @@ def run_dirsearch(live_subdomains, output_dir, threads):
         out_file = dirsearch_dir / f"{sub}.txt"
         subprocess.run(["dirsearch", 
                         "-u", f"https://{sub}",
-                        "-i", "200,204,403,443", "-x", "500,502,429,581,503",
-                        "--deep-recursive", "--force-recursive",
+                        "-i", "200,204,403", "-x", "400,404,500,502,429,581,503",
                         "-R", "5", "--random-agent", "--exclude-sizes=0B", "-t", "50", "-F", 
                         "-o", str(out_file)],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
