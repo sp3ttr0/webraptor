@@ -145,13 +145,18 @@ def run_dirsearch(live_subdomains, output_dir, threads):
 
     def scan(sub):
         out_file = dirsearch_dir / f"{sub}.txt"
-        subprocess.run(["dirsearch", 
-                        "-u", f"https://{sub}",
-                        "-i", "200,204,403", "-x", "400,404,500,502,429,581,503",
-                        "--random-agent", "--exclude-sizes=0B", "-t", "50", "-F", 
-                        "-o", str(out_file)],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        logging.info(f"{Fore.GREEN}[+] Dirsearch completed for {sub}{Style.RESET_ALL}")
+        try:
+            subprocess.run(["dirsearch", 
+                            "-u", f"https://{sub}",
+                            "-i", "200,204,403", "-x", "400,404,500,502,429,581,503",
+                            "--random-agent", "--exclude-sizes=0B", "-t", "50", "-F", 
+                            "-o", str(out_file)],
+                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            logging.info(f"{Fore.GREEN}[+] Dirsearch completed for {sub}{Style.RESET_ALL}")
+        except subprocess.CalledProcessError as e:
+            logging.error(f"{Fore.RED}[-] Dirsearch failed for {sub}: {e}{Style.RESET_ALL}")
+        except Exception as e:
+            logging.error(f"{Fore.RED}[-] Unexpected error with Dirsearch for {sub}: {e}{Style.RESET_ALL}")
 
     with ThreadPoolExecutor(max_workers=threads) as executor:
         executor.map(scan, live_subdomains)
