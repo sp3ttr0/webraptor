@@ -182,9 +182,20 @@ def run_nuclei(live_subdomains_file, output_dir, template=None):
     logging.info(f"{Fore.BLUE}[*] Running Nuclei...{Style.RESET_ALL}")
     output_file = output_dir / "nuclei_results.txt"
 
+    formatted_file = output_dir / "nuclei_formatted_input.txt"
+    try:
+        with open(live_subdomains_file, "r") as infile, open(formatted_file, "w") as outfile:
+            for line in infile:
+                line = line.strip()
+                if line:
+                    outfile.write(f"https://{line}\n")
+    except Exception as e:
+        logging.error(f"{Fore.RED}[-] Failed to prepare Nuclei input: {e}{Style.RESET_ALL}")
+        return
+    
     cmd = [
         "nuclei", 
-        "-l", str(live_subdomains_file), 
+        "-l", str(formatted_file), 
         "-etags", "ssl,dns,security-headers", 
         "-severity", "medium,high,critical",
         "-silent", 
@@ -197,8 +208,12 @@ def run_nuclei(live_subdomains_file, output_dir, template=None):
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         logging.info(f"{Fore.GREEN}[+] Nuclei completed. Results saved to {output_file}{Style.RESET_ALL}")
+    except subprocess.TimeoutExpired:
+        logging.error(f"{Fore.RED}[-] Nuclei scan timed out.{Style.RESET_ALL}")
     except subprocess.CalledProcessError:
         logging.error(f"{Fore.RED}[-] Nuclei failed.{Style.RESET_ALL}")
+    except Exception as e:
+        logging.error(f"{Fore.RED}[-] Unexpected error while running Nuclei: {e}{Style.RESET_ALL}")    
 
 def main():
 
