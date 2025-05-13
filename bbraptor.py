@@ -82,6 +82,14 @@ def check_tool(tool):
     return shutil.which(tool) is not None 
 
 
+def check_required_tools(tools):
+    missing = [tool for tool in tools if not check_tool(tool)]
+    if missing:
+        logging.error(f"{Fore.RED}[-] Missing required tools: {', '.join(missing)}{Style.RESET_ALL}")
+        logging.info(f"{Fore.YELLOW}[i] Please install them via apt, brew, or go install, as appropriate.{Style.RESET_ALL}")
+        sys.exit(1)
+
+
 def append_unique(filename, new_content):
     existing_content = set()
     path = Path(filename)
@@ -124,7 +132,7 @@ def check_live_subdomains(subdomains_file):
                             logging.info(f"{Fore.GREEN}[+] Live: {scheme}{sub}{Style.RESET_ALL}")
                             return sub
                         else:
-                            logging.info(f"{Fore.RED}[+] {sub} returned {status}{Style.RESET_ALL}")
+                            logging.info(f"{Fore.RED}[+] {sub} returned {response.status_code}{Style.RESET_ALL}")
                     except httpx.RequestError:
                         continue
         except Exception:
@@ -198,7 +206,6 @@ def run_nuclei(live_subdomains_file, output_dir, template=None):
         "-l", str(formatted_file), 
         "-etags", "ssl,dns,security-headers", 
         "-severity", "medium,high,critical",
-        "-silent", 
         "-o", str(output_file)
     ]
 
@@ -242,11 +249,8 @@ def main():
         logging.error(f"{Fore.RED}[-] Invalid domain format: {domain}{Style.RESET_ALL}")
         sys.exit(1)
 
-    for tool in ["sublist3r", "subfinder", "dirsearch", "nuclei", "eyewitness"]:
-        if not check_tool(tool):
-            logging.error(f"{Fore.RED}[-] Missing tool: {tool}{Style.RESET_ALL}")
-            sys.exit(1)
-    
+    check_required_tools(["sublist3r", "subfinder", "dirsearch", "nuclei", "eyewitness"])
+
     logging.info(f"{Fore.BLUE}[*] Starting reconnaissance on {domain}{Style.RESET_ALL}")
 
     list_subdomains(domain, base_output)
