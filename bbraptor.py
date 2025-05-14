@@ -204,7 +204,7 @@ def run_nuclei(live_subdomains_file, output_dir, template=None):
     cmd = [
         "nuclei", 
         "-l", str(formatted_file), 
-        "-etags", "ssl,dns,security-headers,x-xss-protection",
+        "-etags", "ssl,dns,http-missing-security-headers,x-xss-protection",
         "-o", str(output_file)
     ]
 
