@@ -132,7 +132,7 @@ def check_live_subdomains(subdomains_file):
                             logging.info(f"{Fore.GREEN}[+] Live: {scheme}{sub}{Style.RESET_ALL}")
                             return sub
                         else:
-                            logging.info(f"{Fore.RED}[+] {sub} returned {response.status_code}{Style.RESET_ALL}")
+                            logging.info(f"{Fore.RED}[-] {sub} returned {response.status_code}{Style.RESET_ALL}")
                     except httpx.RequestError:
                         continue
         except Exception:
@@ -204,8 +204,7 @@ def run_nuclei(live_subdomains_file, output_dir, template=None):
     cmd = [
         "nuclei", 
         "-l", str(formatted_file), 
-        "-etags", "ssl,dns,security-headers", 
-        "-severity", "medium,high,critical",
+        "-etags", "ssl,dns,security-headers,x-xss-protection",
         "-o", str(output_file)
     ]
 
