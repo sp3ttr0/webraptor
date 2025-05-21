@@ -101,6 +101,26 @@ def append_unique(filename, new_content):
     path.write_text("\n".join(existing_content.union(new_lines)) + "\n")
 
 
+def add_https_scheme(input_file: Path, output_file: Path) -> None:
+    """
+    Reads subdomains from input_file, prepends 'https://' to each, and writes to output_file.
+    """
+    try:
+        if not input_file.exists():
+            logging.warning(f"{Fore.YELLOW}[!] {input_file} not found. Skipping HTTPS endpoint creation.{Style.RESET_ALL}")
+            return
+
+        with input_file.open("r") as f:
+            subs = [line.strip() for line in f if line.strip()]
+
+        https_endpoints = [f"https://{sub}" for sub in subs]
+        output_file.write_text("\n".join(https_endpoints) + "\n")
+
+        logging.info(f"{Fore.BLUE}[+] Saved HTTPS endpoints to: {output_file}{Style.RESET_ALL}")
+    except Exception as e:
+        logging.error(f"{Fore.RED}[-] Error creating HTTPS endpoints: {e}{Style.RESET_ALL}")
+
+
 def list_subdomains(domain, output_dir):
     logging.info(f"{Fore.BLUE}[*] Finding subdomains...{Style.RESET_ALL}")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -146,64 +166,48 @@ def check_live_subdomains(subdomains_file):
     logging.info(f"{Fore.BLUE}[+] Total live subdomains: {len(live)}{Style.RESET_ALL}")
     return live
 
-def run_dirsearch(live_subdomains, output_dir, threads):
+def run_dirsearch(endpoint_file, output_dir, threads):
     logging.info(f"{Fore.BLUE}[*] Running Dirsearch...{Style.RESET_ALL}")
     dirsearch_dir = output_dir / "dirsearch_results"
     dirsearch_dir.mkdir(parents=True, exist_ok=True)
 
-    def scan(sub):
-        out_file = dirsearch_dir / f"{sub}.txt"
+    def scan(endpoint):
+        out_file = dirsearch_dir / f"{endpoint}.txt"
         try:
             subprocess.run(["dirsearch", 
-                            "-u", f"https://{sub}",
+                            "-u", f"{endpoint}",
                             "-i", "200,204,403", "-x", "400,404,500,502,429,581,503",
                             "--random-agent", "--exclude-sizes=0B", "-t", "10", "-F", 
                             "-o", str(out_file)],
                            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            logging.info(f"{Fore.GREEN}[+] Dirsearch completed for {sub}{Style.RESET_ALL}")
+            logging.info(f"{Fore.GREEN}[+] Dirsearch completed for {endpoint}{Style.RESET_ALL}")
         except subprocess.CalledProcessError as e:
-            logging.error(f"{Fore.RED}[-] Dirsearch failed for {sub}: {e}{Style.RESET_ALL}")
+            logging.error(f"{Fore.RED}[-] Dirsearch failed for {endpoint}: {e}{Style.RESET_ALL}")
         except Exception as e:
-            logging.error(f"{Fore.RED}[-] Unexpected error with Dirsearch for {sub}: {e}{Style.RESET_ALL}")
+            logging.error(f"{Fore.RED}[-] Unexpected error with Dirsearch for {endpoint}: {e}{Style.RESET_ALL}")
 
     with ThreadPoolExecutor(max_workers=threads) as executor:
-        executor.map(scan, live_subdomains)
+        executor.map(scan, endpoint_file)
 
 def run_eyewitness(live_subdomains, output_dir):
     logging.info(f"{Fore.BLUE}[*] Running EyeWitness...{Style.RESET_ALL}")
     eyewitness_dir = output_dir / "eyewitness"
-    url_list_file = output_dir / "eyewitness_urls.txt"
-
-    with url_list_file.open("w") as f:
-        for sub in live_subdomains:
-            f.write(f"https://{sub}\n")
 
     try:
-        subprocess.run(["eyewitness", "--web", "-f", str(url_list_file),
+        subprocess.run(["eyewitness", "--web", "-f", str(endpoint_file),
                         "-d", str(eyewitness_dir), "--no-prompt"],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         logging.info(f"{Fore.GREEN}[+] EyeWitness completed. Results in {eyewitness_dir}{Style.RESET_ALL}")
     except subprocess.CalledProcessError:
         logging.error(f"{Fore.RED}[-] EyeWitness failed.{Style.RESET_ALL}")
 
-def run_nuclei(live_subdomains_file, output_dir, template=None):
+def run_nuclei(endpoint_file, output_dir, template=None):
     logging.info(f"{Fore.BLUE}[*] Running Nuclei...{Style.RESET_ALL}")
     output_file = output_dir / "nuclei_results.txt"
-
-    formatted_file = output_dir / "nuclei_formatted_input.txt"
-    try:
-        with open(live_subdomains_file, "r") as infile, open(formatted_file, "w") as outfile:
-            for line in infile:
-                line = line.strip()
-                if line:
-                    outfile.write(f"https://{line}\n")
-    except Exception as e:
-        logging.error(f"{Fore.RED}[-] Failed to prepare Nuclei input: {e}{Style.RESET_ALL}")
-        return
     
     cmd = [
         "nuclei", 
-        "-l", str(formatted_file), 
+        "-l", str(endpoint_file), 
         "-etags", "ssl,dns,http-missing-security-headers,x-xss-protection",
         "-o", str(output_file)
     ]
@@ -261,10 +265,13 @@ def main():
 
     live_file = base_output / "subs_live.txt"
     live_file.write_text("\n".join(live_subs) + "\n")
+    
+    endpoint_file = base_output / "endpoints.txt"
+    add_https_scheme(live_file, endpoint_file)
 
-    run_eyewitness(live_subs, base_output)
-    run_dirsearch(live_subs, base_output, args.threads)
-    run_nuclei(live_file, base_output, args.nuclei_template)
+    run_eyewitness(endpoint_file, base_output)
+    run_dirsearch(endpoint_file, base_output, args.threads)
+    run_nuclei(endpoint_file, base_output, args.nuclei_template)
 
     logging.info(f"{Fore.GREEN}[+] Scan completed. Results in {base_output}{Style.RESET_ALL}")
     
