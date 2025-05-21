@@ -189,7 +189,8 @@ def run_dirsearch(endpoint_file, output_dir, threads):
     with open(endpoint_file, 'r') as f:
         endpoints = [line.strip() for line in f if line.strip()]
     
-    executor.map(scan, endpoints)
+    with ThreadPoolExecutor(max_workers=threads) as executor:
+        executor.map(scan, endpoints)
 
 def run_eyewitness(endpoint_file, output_dir):
     logging.info(f"{Fore.BLUE}[*] Running EyeWitness...{Style.RESET_ALL}")
