@@ -189,7 +189,7 @@ def run_dirsearch(endpoint_file, output_dir, threads):
     with ThreadPoolExecutor(max_workers=threads) as executor:
         executor.map(scan, endpoint_file)
 
-def run_eyewitness(live_subdomains, output_dir):
+def run_eyewitness(endpoint_file, output_dir):
     logging.info(f"{Fore.BLUE}[*] Running EyeWitness...{Style.RESET_ALL}")
     eyewitness_dir = output_dir / "eyewitness"
 
