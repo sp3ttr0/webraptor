@@ -179,25 +179,25 @@ def run_dirsearch(endpoint_file, output_dir, threads):
     dirsearch_dir.mkdir(parents=True, exist_ok=True)
 
     def scan(endpoint):
-    sanitized_name = sanitize_filename(endpoint)
-    out_file = dirsearch_dir / f"{sanitized_name}.txt"
-    try:
-        subprocess.run([
-            "dirsearch",
-            "-u", endpoint,
-            "-i", "200,204,403",
-            "-x", "400,404,500,502,429,581,503",
-            "--random-agent",
-            "--exclude-sizes=0B",
-            "-t", "10",
-            "-F",
-            "-o", str(out_file)
-        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        logging.info(f"{Fore.GREEN}[+] Dirsearch completed for {endpoint}{Style.RESET_ALL}")
-    except subprocess.CalledProcessError as e:
-        logging.error(f"{Fore.RED}[-] Dirsearch failed for {endpoint}: {e}{Style.RESET_ALL}")
-    except Exception as e:
-        logging.error(f"{Fore.RED}[-] Unexpected error with Dirsearch for {endpoint}: {e}{Style.RESET_ALL}")
+        sanitized_name = sanitize_filename(endpoint)
+        out_file = dirsearch_dir / f"{sanitized_name}.txt"
+        try:
+            subprocess.run([
+                "dirsearch",
+                "-u", endpoint,
+                "-i", "200,204,403",
+                "-x", "400,404,500,502,429,581,503",
+                "--random-agent",
+                "--exclude-sizes=0B",
+                "-t", "10",
+                "-F",
+                "-o", str(out_file)
+            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            logging.info(f"{Fore.GREEN}[+] Dirsearch completed for {endpoint}{Style.RESET_ALL}")
+        except subprocess.CalledProcessError as e:
+            logging.error(f"{Fore.RED}[-] Dirsearch failed for {endpoint}: {e}{Style.RESET_ALL}")
+        except Exception as e:
+            logging.error(f"{Fore.RED}[-] Unexpected error with Dirsearch for {endpoint}: {e}{Style.RESET_ALL}")
 
     with open(endpoint_file, 'r') as f:
         endpoints = [line.strip() for line in f if line.strip()]
