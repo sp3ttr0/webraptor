@@ -123,7 +123,6 @@ def add_https_scheme(input_file: Path, output_file: Path) -> None:
         https_endpoints = [f"https://{sub}" for sub in subs]
         output_file.write_text("\n".join(https_endpoints) + "\n")
 
-        logging.info(f"{Fore.BLUE}[+] Saved HTTPS endpoints to: {output_file}{Style.RESET_ALL}")
     except Exception as e:
         logging.error(f"{Fore.RED}[-] Error creating HTTPS endpoints: {e}{Style.RESET_ALL}")
 
