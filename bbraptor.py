@@ -222,8 +222,9 @@ def run_nuclei(endpoint_file, output_dir, template=None):
     
     cmd = [
         "nuclei", 
-        "-l", str(endpoint_file), 
-        "-etags", "ssl,dns,http-missing-security-headers,x-xss-protection",
+        "-l", str(endpoint_file),
+        "-es", "info,unknown",
+        "-etags", "ssl,dns,http",
         "-o", str(output_file)
     ]
 
