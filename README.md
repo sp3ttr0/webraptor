@@ -1,6 +1,6 @@
 # Bug Bounty Raptor
 
-Bug Bounty Raptor is an automated tool to streamline the bug bounty process by performing subdomain enumeration, checking for live subdomains, and running various scans, including Eyewitness, Dirsearch, and Nuclei. The results are saved in organized directories for further analysis.
+Bug Bounty Raptor is an automated tool to streamline the bug bounty process by performing subdomain enumeration, checking for live subdomains, and running various scans, including Eyewitness, Dirsearch, Wayback URL, and Nuclei. The results are saved in organized directories for further analysis.
 
 ## Features
 - Subdomain Enumeration
@@ -46,11 +46,12 @@ python3 bbraptor.py <domain>
 ### Options
 - `--output-dir`: Specify the base directory for storing results (default: `results`).
 - `--nuclei-template`: Specify a custom scan Nuclei template.
+- `--wordlist`: Specify a custom wordlist for Dirsearch
 - `--threads`: Specify the max concurrent threads.
 
 ### Example
 ```bash
-python3 bbraptor.py example.com --output-dir my_results --nuclei-template /path/to/custom-template --threads 20
+python3 bbraptor.py example.com --output-dir my_results --nuclei-template /path/to/custom-template --wordlist /path/to/wordlist --threads 20
 ```
 
 ## Output Structure
@@ -60,9 +61,11 @@ The script saves results in the following structure under the specified output d
   └── <domain>/
       ├── subs.txt             # All discovered subdomains
       ├── subs_live.txt        # Live subdomains
-      ├── eyewitness_results/  # Eyewitness for each live subdomain
-      ├── dirsearch_results/   # Dirsearch results for each live subdomain
-      └── nuclei_results.txt   # Nuclei scan results
+      ├── endpoints.txt        # HTTPS endpoints (prepended live subdomains)
+      ├── waybackurls.txt      # Archived URLs from Wayback Machine
+      ├── eyewitness_results/  # Screenshots and analysis of live subdomains
+      ├── dirsearch_results/   # Directory brute-force results
+      └── nuclei_results.txt   # Vulnerability scan results
 ```
 
 ## Notes
