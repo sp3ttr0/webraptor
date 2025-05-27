@@ -188,7 +188,7 @@ def check_live_subdomains(subdomains_file):
     logging.info(f"{Fore.BLUE}[+] Total live subdomains: {len(live)}{Style.RESET_ALL}")
     return live
 
-def run_dirsearch(endpoint_file, output_dir, threads):
+def run_dirsearch(endpoint_file, output_dir, wordlist=None, threads=10):
     logging.info(f"{Fore.BLUE}[*] Running Dirsearch...{Style.RESET_ALL}")
     dirsearch_dir = output_dir / "dirsearch_results"
     dirsearch_dir.mkdir(parents=True, exist_ok=True)
@@ -197,7 +197,7 @@ def run_dirsearch(endpoint_file, output_dir, threads):
         sanitized_name = sanitize_filename(endpoint)
         out_file = dirsearch_dir / f"{sanitized_name}.txt"
         try:
-            subprocess.run([
+            cmd = [
                 "dirsearch",
                 "-u", endpoint,
                 "-i", "200,204,403",
@@ -207,7 +207,10 @@ def run_dirsearch(endpoint_file, output_dir, threads):
                 "-t", "10",
                 "-F",
                 "-o", str(out_file)
-            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            ]
+            if wordlist:
+                cmd.extend(["-w", wordlist])
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             logging.info(f"{Fore.GREEN}[+] Dirsearch completed for {endpoint}{Style.RESET_ALL}")
         except subprocess.CalledProcessError as e:
             logging.error(f"{Fore.RED}[-] Dirsearch failed for {endpoint}: {e}{Style.RESET_ALL}")
@@ -220,6 +223,7 @@ def run_dirsearch(endpoint_file, output_dir, threads):
     with ThreadPoolExecutor(max_workers=threads) as executor:
         executor.map(scan, endpoints)
 
+
 def run_eyewitness(endpoint_file, output_dir):
     logging.info(f"{Fore.BLUE}[*] Running EyeWitness...{Style.RESET_ALL}")
     eyewitness_dir = output_dir / "eyewitness"
@@ -231,6 +235,7 @@ def run_eyewitness(endpoint_file, output_dir):
         logging.info(f"{Fore.GREEN}[+] EyeWitness completed. Results in {eyewitness_dir}{Style.RESET_ALL}")
     except subprocess.CalledProcessError:
         logging.error(f"{Fore.RED}[-] EyeWitness failed.{Style.RESET_ALL}")
+
 
 def run_nuclei(endpoint_file, output_dir, template=None):
     logging.info(f"{Fore.BLUE}[*] Running Nuclei...{Style.RESET_ALL}")
@@ -257,6 +262,7 @@ def run_nuclei(endpoint_file, output_dir, template=None):
     except Exception as e:
         logging.error(f"{Fore.RED}[-] Unexpected error while running Nuclei: {e}{Style.RESET_ALL}")    
 
+
 def main():
 
     signal.signal(signal.SIGINT, handle_sigint)
@@ -265,6 +271,7 @@ def main():
     parser.add_argument("target", help="Target domain (e.g. example.com)")
     parser.add_argument("--output-dir", default="results", help="Output directory")
     parser.add_argument("--nuclei-template", help="Custom Nuclei template path")
+    parser.add_argument("--wordlist", help="Custom wordlist path for Dirsearch")
     parser.add_argument("--threads", type=int, default=10, help="Max concurrent threads")
     args = parser.parse_args()
 
@@ -302,10 +309,11 @@ def main():
     add_https_scheme(live_file, endpoint_file)
 
     run_eyewitness(endpoint_file, base_output)
-    run_dirsearch(endpoint_file, base_output, args.threads)
+run_dirsearch(endpoints_file, output_dir, wordlist=args.wordlist, threads=args.threads)
     run_nuclei(endpoint_file, base_output, args.nuclei_template)
 
     logging.info(f"{Fore.GREEN}[+] Scan completed. Results in {base_output}{Style.RESET_ALL}")
-    
+
+
 if __name__ == "__main__":
     main()
