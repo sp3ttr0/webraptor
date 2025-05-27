@@ -132,18 +132,34 @@ def list_subdomains(domain, output_dir):
     output_dir.mkdir(parents=True, exist_ok=True)
     subdomains_path = output_dir / "subs.txt"
 
-    logging.info(f"{Fore.BLUE}[*] Listing subdomains using sublist3r...{Style.RESET_ALL}")
+    # Sublist3r
+    logging.info(f"{Fore.BLUE}[*] Using Sublist3r...{Style.RESET_ALL}")
     subprocess.run(["sublist3r", "-d", domain, "-o", str(subdomains_path)],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    logging.info(f"{Fore.BLUE}[*] Listing subdomains using subfinder...{Style.RESET_ALL}")
+    # Subfinder
+    logging.info(f"{Fore.BLUE}[*] Using Subfinder...{Style.RESET_ALL}")
     subfinder_output = subprocess.run(["subfinder", "-d", domain, "-silent"],
                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode()
     append_unique(subdomains_path, subfinder_output)
 
+    # Amass
+    logging.info(f"{Fore.BLUE}[*] Using Amass (passive)...{Style.RESET_ALL}")
+    amass_output = subprocess.run(["amass", "enum", "-passive", "-d", domain],
+                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode()
+    append_unique(subdomains_path, amass_output)
+
+    # Assetfinder
+    logging.info(f"{Fore.BLUE}[*] Using Assetfinder...{Style.RESET_ALL}")
+    assetfinder_output = subprocess.run(["assetfinder", "--subs-only", domain],
+                                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode()
+    append_unique(subdomains_path, assetfinder_output)
+
+    # Final deduplication and save
     unique_subs = sorted(set(subdomains_path.read_text().splitlines()))
     subdomains_path.write_text("\n".join(unique_subs) + "\n")
     logging.info(f"{Fore.BLUE}[+] Total unique subdomains found: {len(unique_subs)}{Style.RESET_ALL}")
+
 
 def check_live_subdomains(subdomains_file):
     logging.info(f"{Fore.BLUE}[*] Checking live subdomains...{Style.RESET_ALL}")
@@ -268,7 +284,7 @@ def main():
         logging.error(f"{Fore.RED}[-] Invalid domain format: {domain}{Style.RESET_ALL}")
         sys.exit(1)
 
-    check_required_tools(["sublist3r", "subfinder", "dirsearch", "nuclei", "eyewitness"])
+    check_required_tools(["sublist3r", "subfinder", "amass", "assetfinder", "dirsearch", "nuclei", "eyewitness"])
 
     logging.info(f"{Fore.BLUE}[*] Starting reconnaissance on {domain}{Style.RESET_ALL}")
 
