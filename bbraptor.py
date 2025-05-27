@@ -6,8 +6,8 @@
 # ---------------------------------------------------------------
 # This script automates the bug bounty reconnaissance process,
 # performing subdomain enumeration, live subdomain checks
-# and comprehensive scanning tools such as Eyewitness, 
-# Dirsearch, and Nuclei. It utilizes Python alongside powerful 
+# and comprehensive scanning tools such as Eyewitness, Dirsearch
+# Wayback URL, and Nuclei. It utilizes Python alongside powerful 
 # external tools to help network administrators and pentesters 
 # identify potential vulnerabilities in target domains.
 #
@@ -188,6 +188,26 @@ def check_live_subdomains(subdomains_file):
     logging.info(f"{Fore.BLUE}[+] Total live subdomains: {len(live)}{Style.RESET_ALL}")
     return live
 
+
+def run_waybackurls(domains_file, output_dir):
+    logging.info(f"{Fore.BLUE}[*] Running Wayback Machine URL collection...{Style.RESET_ALL}")
+    wayback_dir = output_dir / "wayback_results"
+    wayback_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with open(domains_file, 'r') as f:
+            domains = [line.strip() for line in f if line.strip()]
+
+        for domain in domains:
+            sanitized_name = sanitize_filename(domain)
+            out_file = wayback_dir / f"{sanitized_name}.txt"
+            with open(out_file, 'w') as out:
+                subprocess.run(["waybackurls", domain], stdout=out, stderr=subprocess.DEVNULL)
+            logging.info(f"{Fore.GREEN}[+] Wayback URLs collected for {domain}{Style.RESET_ALL}")
+    except Exception as e:
+        logging.error(f"{Fore.RED}[-] Error during Wayback Machine collection: {e}{Style.RESET_ALL}")
+
+
 def run_dirsearch(endpoint_file, output_dir, wordlist=None, threads=10):
     logging.info(f"{Fore.BLUE}[*] Running Dirsearch...{Style.RESET_ALL}")
     dirsearch_dir = output_dir / "dirsearch_results"
@@ -200,6 +220,7 @@ def run_dirsearch(endpoint_file, output_dir, wordlist=None, threads=10):
             cmd = [
                 "dirsearch",
                 "-u", endpoint,
+                "-e", "php,asp,aspx,jsp,html,js,json",
                 "-i", "200,204,403",
                 "-x", "400,404,500,502,429,581,503",
                 "--random-agent",
@@ -291,7 +312,7 @@ def main():
         logging.error(f"{Fore.RED}[-] Invalid domain format: {domain}{Style.RESET_ALL}")
         sys.exit(1)
 
-    check_required_tools(["sublist3r", "subfinder", "amass", "assetfinder", "dirsearch", "nuclei", "eyewitness"])
+    check_required_tools(["sublist3r", "subfinder", "amass", "assetfinder", "dirsearch", "nuclei", "eyewitness", "waybackurls"])
 
     logging.info(f"{Fore.BLUE}[*] Starting reconnaissance on {domain}{Style.RESET_ALL}")
 
@@ -308,8 +329,9 @@ def main():
     endpoint_file = base_output / "endpoints.txt"
     add_https_scheme(live_file, endpoint_file)
 
+    run_waybackurls(live_file, base_output)
     run_eyewitness(endpoint_file, base_output)
-run_dirsearch(endpoints_file, output_dir, wordlist=args.wordlist, threads=args.threads)
+    run_dirsearch(endpoint_file, output_dir, wordlist=args.wordlist, threads=args.threads)
     run_nuclei(endpoint_file, base_output, args.nuclei_template)
 
     logging.info(f"{Fore.GREEN}[+] Scan completed. Results in {base_output}{Style.RESET_ALL}")
