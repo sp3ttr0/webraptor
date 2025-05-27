@@ -4,11 +4,13 @@ Bug Bounty Raptor is an automated tool to streamline the bug bounty process by p
 
 ## Features
 - Subdomain Enumeration
-  - Using `sublist3r`, `subfinder`.
+  - Using `sublist3r`, `subfinder`, `assetfinder`, `amass`.
 - Live Subdomain Check
   - Identifies active subdomains using HTTP requests.
+- Wayback URL
+  - Extracts historical URLs for each live subdomain from the Wayback Machine using     waybackurls. Useful for discovering hidden endpoints, parameters, deprecated        paths, and potential attack surfaces.
 - Eyewitness
-  - Captures website screenshots, provides server header information, and attempts to identify default credentials if available.
+  - Captures website screenshots, provides server header information, and attempts      to identify default credentials if available.
 - Dirsearch
   - Performs directory brute-forcing on live subdomains.
 - Nuclei
@@ -20,6 +22,9 @@ Bug Bounty Raptor is an automated tool to streamline the bug bounty process by p
 Ensure the following tools are installed and available in your `PATH`:
 - [sublist3r](https://github.com/aboul3la/Sublist3r)
 - [subfinder](https://github.com/projectdiscovery/subfinder)
+- [assetfinder](https://github.com/tomnomnom/assetfinder)
+- [amass](https://github.com/owasp-amass/amass)
+- [waybackurls](https://github.com/tomnomnom/waybackurls)
 - [eyewitness](https://github.com/RedSiege/EyeWitness)
 - [dirsearch](https://github.com/maurosoria/dirsearch)
 - [nuclei](https://github.com/projectdiscovery/nuclei)
