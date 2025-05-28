@@ -331,7 +331,7 @@ def main():
 
     run_waybackurls(live_file, base_output)
     run_eyewitness(endpoint_file, base_output)
-    run_dirsearch(endpoint_file, output_dir, wordlist=args.wordlist, threads=args.threads)
+    run_dirsearch(endpoint_file, base_output, wordlist=args.wordlist, threads=args.threads)
     run_nuclei(endpoint_file, base_output, args.nuclei_template)
 
     logging.info(f"{Fore.GREEN}[+] Scan completed. Results in {base_output}{Style.RESET_ALL}")
