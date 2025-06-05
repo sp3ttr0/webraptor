@@ -145,10 +145,19 @@ def list_subdomains(domain, output_dir):
 
     # Amass
     logging.info(f"{Fore.BLUE}[*] Using Amass (passive)...{Style.RESET_ALL}")
-    amass_output = subprocess.run(["amass", "enum", "-passive", "-d", domain],
-                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode()
+    amass_raw_output = subprocess.run(
+        ["amass", "enum", "-passive", "-d", domain],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL
+    ).stdout.decode()
+    
+    # Extract only lines that are valid subdomains (e.g., end with the domain)
+    amass_output = "\n".join(
+        line.strip() for line in amass_raw_output.splitlines()
+        if line.strip().endswith(f".{domain}") or line.strip() == domain
+    )
     append_unique(subdomains_path, amass_output)
-
+    
     # Assetfinder
     logging.info(f"{Fore.BLUE}[*] Using Assetfinder...{Style.RESET_ALL}")
     assetfinder_output = subprocess.run(["assetfinder", "--subs-only", domain],
