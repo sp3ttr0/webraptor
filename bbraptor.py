@@ -2,7 +2,7 @@
 
 
 # ===============================================================
-# WRaptor - Automated Web App Scanning Script
+# Raptor - Automated Web App Scanning Script
 # ---------------------------------------------------------------
 # Author: Howell King Jr. | Github: https://github.com/sp3ttr0
 # ===============================================================
