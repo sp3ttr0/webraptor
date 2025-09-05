@@ -2,15 +2,8 @@
 
 
 # ===============================================================
-# Bug Bounty Raptor - Automated Bug Bounty Scanning Script
+# WRaptor - Automated Web App Scanning Script
 # ---------------------------------------------------------------
-# This script automates the bug bounty reconnaissance process,
-# performing subdomain enumeration, live subdomain checks
-# and comprehensive scanning tools such as Eyewitness, Dirsearch
-# Wayback URL, and Nuclei. It utilizes Python alongside powerful 
-# external tools to help network administrators and pentesters 
-# identify potential vulnerabilities in target domains.
-#
 # Author: Howell King Jr. | Github: https://github.com/sp3ttr0
 # ===============================================================
 
