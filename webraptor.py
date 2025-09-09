@@ -72,6 +72,34 @@ def check_required_tools(tools):
 def sanitize_filename(url):
     return re.sub(r'[^a-zA-Z0-9.-]', '_', url)
 
+def run_whatweb(target, output_dir):
+    logging.info(f"{Fore.BLUE}[*] Running WhatWeb...{Style.RESET_ALL}")
+    whatweb_file = output_dir / "whatweb_results.txt"
+    try:
+        with open(whatweb_file, "w") as out:
+            subprocess.run(["whatweb", "-v", target], stdout=out, stderr=subprocess.DEVNULL, check=True)
+        logging.info(f"{Fore.GREEN}[+] WhatWeb scan completed. Results saved to {whatweb_file}{Style.RESET_ALL}")
+    except subprocess.CalledProcessError:
+        logging.error(f"{Fore.RED}[-] WhatWeb scan failed.{Style.RESET_ALL}")
+    except Exception as e:
+        logging.error(f"{Fore.RED}[-] Unexpected error while running WhatWeb: {e}{Style.RESET_ALL}")
+
+def run_nikto(target, output_dir):
+    logging.info(f"{Fore.BLUE}[*] Running Nikto...{Style.RESET_ALL}")
+    nikto_file = output_dir / "nikto_results.txt"
+    try:
+        with open(nikto_file, "w") as out:
+            subprocess.run(
+                ["sudo", "nikto", "-C", "all", "-host", target],
+                stdout=out, stderr=subprocess.DEVNULL, check=True
+            )
+        logging.info(f"{Fore.GREEN}[+] Nikto scan completed. Results saved to {nikto_file}{Style.RESET_ALL}")
+    except subprocess.CalledProcessError:
+        logging.error(f"{Fore.RED}[-] Nikto scan failed.{Style.RESET_ALL}")
+    except Exception as e:
+        logging.error(f"{Fore.RED}[-] Unexpected error while running Nikto: {e}{Style.RESET_ALL}")
+
+
 def run_waybackurls(target, output_dir):
     logging.info(f"{Fore.BLUE}[*] Running Wayback Machine URL collection...{Style.RESET_ALL}")
     wayback_dir = output_dir / "wayback_results"
@@ -131,10 +159,12 @@ def main():
     setup_logging(log_file)
 
     print_banner()
-    check_required_tools(["dirsearch", "nuclei", "eyewitness", "waybackurls"])
+    check_required_tools(["whatweb", "nikto", "dirsearch", "nuclei", "eyewitness", "waybackurls"])
 
     logging.info(f"{Fore.BLUE}[*] Starting scan on {target}{Style.RESET_ALL}")
 
+    run_whatweb(target, base_output)
+    run_nikto(target, base_output)
     run_waybackurls(target, base_output)
     run_dirsearch(target, base_output, wordlist=args.wordlist)
     run_eyewitness(target, base_output)
