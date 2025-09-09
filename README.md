@@ -21,6 +21,8 @@ It performs historical URL extraction, directory brute-forcing, screenshot captu
  
 ## Requirements
 Ensure the following tools are installed and available in your `PATH`:
+- [whatweb](https://github.com/urbanadventurer/WhatWeb)
+- [nikto](https://github.com/sullo/nikto)
 - [waybackurls](https://github.com/tomnomnom/waybackurls)
 - [eyewitness](https://github.com/RedSiege/EyeWitness)
 - [dirsearch](https://github.com/maurosoria/dirsearch)
@@ -55,6 +57,8 @@ The script saves results in the following structure under the specified output d
 ```
 <output-dir>/
   └── <target>/
+      ├── whatweb_results.txt            # WhatWeb fingerprinting output
+      ├── nikto_results.txt       # Nikto vulnerability scan output
       ├── wayback_results/       # Historical URLs from Wayback Machine
       ├── eyewitness/            # Screenshots and analysis
       ├── dirsearch_results/     # Directory brute-force results
