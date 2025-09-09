@@ -57,8 +57,8 @@ The script saves results in the following structure under the specified output d
 ```
 <output-dir>/
   └── <target>/
-      ├── whatweb_results.txt            # WhatWeb fingerprinting output
-      ├── nikto_results.txt       # Nikto vulnerability scan output
+      ├── whatweb_results.txt    # WhatWeb fingerprinting output
+      ├── nikto_results.txt      # Nikto vulnerability scan output
       ├── wayback_results/       # Historical URLs from Wayback Machine
       ├── eyewitness/            # Screenshots and analysis
       ├── dirsearch_results/     # Directory brute-force results
