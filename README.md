@@ -1,6 +1,6 @@
 # webraptor
 
-WebRaptor is an automated tool to streamline web application security testing by combining reconnaissance and scanning modules into a single workflow.
+webraptor is an automated tool to streamline web application security testing by combining reconnaissance and scanning modules into a single workflow.
 
 It performs historical URL extraction, directory brute-forcing, screenshot capture, and vulnerability scanning with Nuclei. Results are saved in structured directories for easier analysis and reporting.
 
