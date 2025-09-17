@@ -131,8 +131,6 @@ def run_nikto(target, output_dir):
     try:
         with open(out_path, "w") as out:
             cmd = ["nikto", "-C", "all", "-host", target]
-            if use_sudo:
-                cmd.insert(0, "sudo")
             subprocess.run(cmd, stdout=out, stderr=subprocess.DEVNULL, check=True)
         return str(out_path)
     except subprocess.CalledProcessError as e:
