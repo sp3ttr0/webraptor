@@ -226,7 +226,7 @@ def run_nuclei(target, output_dir, template=None):
     name = "nuclei"
     print(f"{Fore.MAGENTA}[{name}] Starting...{Style.RESET_ALL}")
     out_path = output_dir / "nuclei_results.txt"
-    cmd = ["nuclei", "-u", target, "-es", "info,unknown", "-etags", "ssl,dns,http", "-o", str(out_path)]
+    cmd = ["nuclei", "-u", target, "-etags", "ssl,dns,http", "-o", str(out_path)]
     if template:
         cmd.extend(["-t", template])
     try:
