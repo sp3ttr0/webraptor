@@ -50,42 +50,24 @@ def print_banner():
     """
     print(f"{Fore.CYAN}{banner}{Style.RESET_ALL}")
 
-# -------------------------
-# Logging / signal handling
-# -------------------------
-def setup_logging(log_file: Path):
-    """Configure logging to console and file without timestamps."""
-    log_format = "%(message)s"  # no time, no level
-    logging.basicConfig(
-        level=logging.INFO,
-        format=log_format,
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler(log_file, mode="w", encoding="utf-8"),
-        ],
-    )
-
-def handle_sigint(signal_received, frame):
-    logging.warning(f"{Fore.RED}[!] Ctrl+C detected. Exiting...{Style.RESET_ALL}")
-    sys.exit(0)
-
-# -------------------------
-# Helpers
-# -------------------------
 def check_tool(tool):
     return shutil.which(tool) is not None
 
 def check_required_tools(tools):
     missing = [tool for tool in tools if not check_tool(tool)]
     if missing:
-        logging.error(f"{Fore.RED}[-] Missing required tools: {', '.join(missing)}{Style.RESET_ALL}")
-        logging.info(f"{Fore.YELLOW}[i] Install missing tools or remove them from the required list if you don't need them right now.{Style.RESET_ALL}")
+        print(f"{Fore.RED}[-] Missing required tools: {', '.join(missing)}{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}[i] Install missing tools or remove them from the required list if you don't need them right now.{Style.RESET_ALL}")
         sys.exit(1)
 
 def sanitize_filename(url):
     # remove scheme if present before sanitizing so folder names are tidy
     url = re.sub(r'^https?://', '', url)
     return re.sub(r'[^a-zA-Z0-9.-]', '_', url)
+
+def handle_sigint(signal_received, frame):
+    print(f"{Fore.RED}[!] Ctrl+C detected. Exiting...{Style.RESET_ALL}")
+    sys.exit(0)
 
 # -------------------------
 # Target verification
@@ -95,54 +77,49 @@ def is_target_up(user_target, timeout=8.0):
     Checks whether the target is reachable. Accepts full URLs (with scheme) or bare domains.
     Returns the canonical URL (with scheme) that worked, or None if none responded.
     """
-    logging.info(f"{Fore.BLUE}[*] Verifying target is up: {user_target}{Style.RESET_ALL}")
+    print(f"{Fore.BLUE}[*] Verifying target is up: {user_target}{Style.RESET_ALL}")
 
     candidates = []
-    # If user provided a scheme, try it directly first
     if re.match(r'^https?://', user_target, re.I):
         candidates.append(user_target)
     else:
-        # try https then http
         candidates.append(f"https://{user_target}")
         candidates.append(f"http://{user_target}")
 
     for candidate in candidates:
         try:
+            # use a fresh client per request to avoid any extra debug output
             with httpx.Client(timeout=timeout, follow_redirects=True) as client:
                 resp = client.get(candidate)
-                # treat 2xx and 3xx as up; treat <400 as responsive
                 if resp.status_code < 400:
-                    logging.info(f"{Fore.GREEN}[+] Target responsive: {candidate} (HTTP {resp.status_code}){Style.RESET_ALL}")
+                    print(f"{Fore.GREEN}[+] Target responsive: {candidate} (HTTP {resp.status_code}){Style.RESET_ALL}")
                     return candidate
                 else:
-                    logging.warning(f"{Fore.YELLOW}[-] {candidate} returned HTTP {resp.status_code}{Style.RESET_ALL}")
-        except httpx.RequestError as e:
-            logging.debug(f"{Fore.YELLOW}[i] Request to {candidate} failed: {e}{Style.RESET_ALL}")
-            continue
-        except Exception as e:
-            logging.debug(f"{Fore.YELLOW}[i] Unexpected error when probing {candidate}: {e}{Style.RESET_ALL}")
+                    print(f"{Fore.YELLOW}[-] {candidate} returned HTTP {resp.status_code}{Style.RESET_ALL}")
+        except Exception:
+            # swallow and try next candidate
             continue
 
-    logging.error(f"{Fore.RED}[-] Target {user_target} is not reachable via HTTP/HTTPS.{Style.RESET_ALL}")
+    print(f"{Fore.RED}[-] Target {user_target} is not reachable via HTTP/HTTPS.{Style.RESET_ALL}")
     return None
 
 # -------------------------
 # Tool runners
 # -------------------------
 def run_whatweb(target, output_dir):
-    logging.info(f"{Fore.BLUE}[whatweb] Starting...{Style.RESET_ALL}")
+    print(f"{Fore.MAGENTA}[whatweb] Starting...{Style.RESET_ALL}")
     whatweb_file = output_dir / "whatweb_results.txt"
     try:
         with open(whatweb_file, "w") as out:
             subprocess.run(["whatweb", "-v", target], stdout=out, stderr=subprocess.DEVNULL, check=True)
-        logging.info(f"{Fore.GREEN}[whatweb] Completed. Results: {whatweb_file}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}[whatweb] Completed. Results: {whatweb_file}{Style.RESET_ALL}")
     except subprocess.CalledProcessError:
-        logging.error(f"{Fore.RED}[whatweb] Failed.{Style.RESET_ALL}")
+        print(f"{Fore.RED}[whatweb] Failed.{Style.RESET_ALL}")
     except Exception as e:
-        logging.error(f"{Fore.RED}[whatweb] Unexpected error: {e}{Style.RESET_ALL}")
+        print(f"{Fore.RED}[whatweb] Unexpected error: {e}{Style.RESET_ALL}")
 
 def run_nikto(target, output_dir, use_sudo=True):
-    logging.info(f"{Fore.BLUE}[nikto] Starting...{Style.RESET_ALL}")
+    print(f"{Fore.MAGENTA}[nikto] Starting...{Style.RESET_ALL}")
     nikto_file = output_dir / "nikto_results.txt"
     try:
         with open(nikto_file, "w") as out:
@@ -150,28 +127,28 @@ def run_nikto(target, output_dir, use_sudo=True):
             if use_sudo:
                 cmd.insert(0, "sudo")
             subprocess.run(cmd, stdout=out, stderr=subprocess.DEVNULL, check=True)
-        logging.info(f"{Fore.GREEN}[nikto] Completed. Results: {nikto_file}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}[nikto] Completed. Results: {nikto_file}{Style.RESET_ALL}")
     except subprocess.CalledProcessError:
-        logging.error(f"{Fore.RED}[nikto] Failed.{Style.RESET_ALL}")
+        print(f"{Fore.RED}[nikto] Failed.{Style.RESET_ALL}")
     except Exception as e:
-        logging.error(f"{Fore.RED}[nikto] Unexpected error: {e}{Style.RESET_ALL}")
+        print(f"{Fore.RED}[nikto] Unexpected error: {e}{Style.RESET_ALL}")
 
 def run_waybackurls(target, output_dir):
-    logging.info(f"{Fore.BLUE}[waybackurls] Starting...{Style.RESET_ALL}")
+    print(f"{Fore.MAGENTA}[waybackurls] Starting...{Style.RESET_ALL}")
     wayback_dir = output_dir / "wayback_results"
     wayback_dir.mkdir(parents=True, exist_ok=True)
     out_file = wayback_dir / f"{sanitize_filename(target)}.txt"
     try:
         with open(out_file, 'w') as out:
             subprocess.run(["waybackurls", target], stdout=out, stderr=subprocess.DEVNULL, check=True)
-        logging.info(f"{Fore.GREEN}[waybackurls] Completed. Results: {out_file}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}[waybackurls] Completed. Results: {out_file}{Style.RESET_ALL}")
     except subprocess.CalledProcessError:
-        logging.error(f"{Fore.RED}[waybackurls] Failed.{Style.RESET_ALL}")
+        print(f"{Fore.RED}[waybackurls] Failed.{Style.RESET_ALL}")
     except Exception as e:
-        logging.error(f"{Fore.RED}[waybackurls] Unexpected error: {e}{Style.RESET_ALL}")
+        print(f"{Fore.RED}[waybackurls] Unexpected error: {e}{Style.RESET_ALL}")
 
 def run_dirsearch(target, output_dir, wordlist=None):
-    logging.info(f"{Fore.BLUE}[dirsearch] Starting...{Style.RESET_ALL}")
+    print(f"{Fore.MAGENTA}[dirsearch] Starting...{Style.RESET_ALL}")
     dirsearch_dir = output_dir / "dirsearch_results"
     dirsearch_dir.mkdir(parents=True, exist_ok=True)
     out_file = dirsearch_dir / f"{sanitize_filename(target)}.txt"
@@ -185,38 +162,38 @@ def run_dirsearch(target, output_dir, wordlist=None):
         cmd.extend(["-w", wordlist])
     try:
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-        logging.info(f"{Fore.GREEN}[dirsearch] Completed. Results: {out_file}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}[dirsearch] Completed. Results: {out_file}{Style.RESET_ALL}")
     except subprocess.CalledProcessError:
-        logging.error(f"{Fore.RED}[dirsearch] Failed.{Style.RESET_ALL}")
+        print(f"{Fore.RED}[dirsearch] Failed.{Style.RESET_ALL}")
     except Exception as e:
-        logging.error(f"{Fore.RED}[dirsearch] Unexpected error: {e}{Style.RESET_ALL}")
+        print(f"{Fore.RED}[dirsearch] Unexpected error: {e}{Style.RESET_ALL}")
 
 def run_eyewitness(target, output_dir):
-    logging.info(f"{Fore.BLUE}[eyewitness] Starting...{Style.RESET_ALL}")
+    print(f"{Fore.MAGENTA}[eyewitness] Starting...{Style.RESET_ALL}")
     eyewitness_dir = output_dir / "eyewitness"
     eyewitness_dir.mkdir(parents=True, exist_ok=True)
     try:
         subprocess.run(["eyewitness", "--web", "-f", target, "-d", str(eyewitness_dir), "--no-prompt"],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-        logging.info(f"{Fore.GREEN}[eyewitness] Completed. Results: {eyewitness_dir}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}[eyewitness] Completed. Results: {eyewitness_dir}{Style.RESET_ALL}")
     except subprocess.CalledProcessError:
-        logging.error(f"{Fore.RED}[eyewitness] Failed.{Style.RESET_ALL}")
+        print(f"{Fore.RED}[eyewitness] Failed.{Style.RESET_ALL}")
     except Exception as e:
-        logging.error(f"{Fore.RED}[eyewitness] Unexpected error: {e}{Style.RESET_ALL}")
+        print(f"{Fore.RED}[eyewitness] Unexpected error: {e}{Style.RESET_ALL}")
 
 def run_nuclei(target, output_dir, template=None):
-    logging.info(f"{Fore.BLUE}[nuclei] Starting...{Style.RESET_ALL}")
+    print(f"{Fore.MAGENTA}[nuclei] Starting...{Style.RESET_ALL}")
     output_file = output_dir / "nuclei_results.txt"
     cmd = ["nuclei", "-u", target, "-es", "info,unknown", "-etags", "ssl,dns,http", "-o", str(output_file)]
     if template:
         cmd.extend(["-t", template])
     try:
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-        logging.info(f"{Fore.GREEN}[nuclei] Completed. Results: {output_file}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}[nuclei] Completed. Results: {output_file}{Style.RESET_ALL}")
     except subprocess.CalledProcessError:
-        logging.error(f"{Fore.RED}[nuclei] Failed.{Style.RESET_ALL}")
+        print(f"{Fore.RED}[nuclei] Failed.{Style.RESET_ALL}")
     except Exception as e:
-        logging.error(f"{Fore.RED}[nuclei] Unexpected error: {e}{Style.RESET_ALL}")
+        print(f"{Fore.RED}[nuclei] Unexpected error: {e}{Style.RESET_ALL}")
 
 # -------------------------
 # Main
@@ -233,27 +210,23 @@ def main():
     parser.add_argument("--nikto-no-sudo", action="store_true", help="Run nikto without sudo (useful if sudo not available)")
     args = parser.parse_args()
 
-    # logging before banner so all prints show
-    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-    log_file = Path(args.output_dir) / "webraptor.log"
-    setup_logging(log_file)
-
-    print_banner()
-
-    # check target is up
     user_target = args.target.strip()
+
+    # check target first
     canonical_target = is_target_up(user_target)
     if not canonical_target:
-        logging.error(f"{Fore.RED}[-] Aborting scans because target is not reachable: {user_target}{Style.RESET_ALL}")
+        print(f"{Fore.RED}[-] Aborting scans because target is not reachable: {user_target}{Style.RESET_ALL}")
         sys.exit(1)
 
     base_output = Path(args.output_dir) / sanitize_filename(canonical_target)
     base_output.mkdir(parents=True, exist_ok=True)
 
+    print_banner()
+
     check_required_tools(["whatweb", "nikto", "dirsearch", "nuclei", "eyewitness", "waybackurls"])
 
-    logging.info(f"{Fore.CYAN}[~] Target confirmed: {canonical_target}{Style.RESET_ALL}")
-    logging.info(f"{Fore.BLUE}[*] Starting scans...{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}[~] Target confirmed: {canonical_target}{Style.RESET_ALL}")
+    print(f"{Fore.BLUE}[*] Starting scans...{Style.RESET_ALL}")
 
     tasks = [
         ("whatweb", run_whatweb, (canonical_target, base_output), {}),
@@ -264,21 +237,23 @@ def main():
         ("nuclei", run_nuclei, (canonical_target, base_output), {"template": args.nuclei_template}),
     ]
 
-    with ThreadPoolExecutor(max_workers=args.threads) as executor:
-        future_to_task = {}
+    # Run tasks in parallel — do not duplicate start messages
+    with ThreadPoolExecutor(max_workers=max(1, args.threads)) as executor:
+        future_to_name = {}
         for name, func, fargs, fkwargs in tasks:
-            logging.info(f"{Fore.MAGENTA}[{name}] Starting...{Style.RESET_ALL}")
-            future_to_task[executor.submit(func, *fargs, **fkwargs)] = name
+            # submit only, don't print here (functions print their own start)
+            future = executor.submit(func, *fargs, **fkwargs)
+            future_to_name[future] = name
 
-        for future in as_completed(future_to_task):
-            name = future_to_task[future]
+        for future in as_completed(future_to_name):
+            name = future_to_name[future]
             try:
                 future.result()
-                logging.info(f"{Fore.GREEN}[{name}] Completed.{Style.RESET_ALL}")
+                print(f"{Fore.GREEN}[{name}] Completed.{Style.RESET_ALL}")
             except Exception as e:
-                logging.error(f"{Fore.RED}[{name}] Failed. {e}{Style.RESET_ALL}")
+                print(f"{Fore.RED}[{name}] Failed: {e}{Style.RESET_ALL}")
 
-    logging.info(f"{Fore.GREEN}[+] All scans completed. Results in {base_output}{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}[+] All scans completed. Results in {base_output}{Style.RESET_ALL}")
 
 if __name__ == "__main__":
     main()
