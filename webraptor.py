@@ -79,34 +79,71 @@ def handle_sigint(signal_received, frame):
 # -------------------------
 def is_target_up(user_target, timeout=8.0):
     """
-    Checks whether the target is reachable. Accepts full URLs (with scheme) or bare domains.
-    Returns the canonical URL (with scheme) that worked, or None if none responded.
+    Checks whether the target is reachable.
+
+    Behavior:
+    - If user_target includes a scheme (http:// or https://), try that scheme first and prefer it.
+      If it fails but the other scheme works, print a warning and switch to the working scheme.
+    - If no scheme provided, try https:// then http://.
+
+    Returns the canonical URL (with scheme) that will be used for scans, or None if none responded.
     """
     print(f"{Fore.BLUE}[*] Verifying target is up: {user_target}{Style.RESET_ALL}")
 
+    # Normalize whitespace
+    user_target = user_target.strip()
+
+    # Determine whether user provided a scheme explicitly
+    user_provided_scheme = bool(re.match(r'^https?://', user_target, re.I))
+
     candidates = []
-    if re.match(r'^https?://', user_target, re.I):
+    if user_provided_scheme:
+        # Try the user-specified candidate first
         candidates.append(user_target)
+        # Also prepare the alternate scheme for fallback
+        alt = None
+        if user_target.lower().startswith("https://"):
+            alt = "http://" + re.sub(r'^https?://', '', user_target, flags=re.I)
+        else:
+            alt = "https://" + re.sub(r'^https?://', '', user_target, flags=re.I)
+        candidates.append(alt)
     else:
+        # No scheme provided: prefer https, then http
         candidates.append(f"https://{user_target}")
         candidates.append(f"http://{user_target}")
 
+    successful = None
     for candidate in candidates:
         try:
-            # use a fresh client per request
             with httpx.Client(timeout=timeout, follow_redirects=True) as client:
                 resp = client.get(candidate)
                 if resp.status_code < 400:
+                    successful = candidate
                     print(f"{Fore.GREEN}[+] Target responsive: {candidate} (HTTP {resp.status_code}){Style.RESET_ALL}")
-                    return candidate
+                    break
                 else:
                     print(f"{Fore.YELLOW}[-] {candidate} returned HTTP {resp.status_code}{Style.RESET_ALL}")
         except Exception:
             # try next candidate
             continue
 
-    print(f"{Fore.RED}[-] Target {user_target} is not reachable via HTTP/HTTPS.{Style.RESET_ALL}")
-    return None
+    if not successful:
+        print(f"{Fore.RED}[-] Target {user_target} is not reachable via HTTP/HTTPS.{Style.RESET_ALL}")
+        return None
+
+    # If user explicitly provided a scheme but it wasn't the one that succeeded,
+    # inform the user we are switching to the working scheme.
+    if user_provided_scheme:
+        provided = user_target if re.match(r'^https?://', user_target, re.I) else None
+        # provided variable always user_target (with scheme) here
+        if provided and not successful.lower().startswith(provided.split("://",1)[0]):
+            # Determine if schemes differ
+            provided_scheme = re.match(r'^(https?)://', user_target, re.I).group(1).lower()
+            successful_scheme = re.match(r'^(https?)://', successful, re.I).group(1).lower()
+            if provided_scheme != successful_scheme:
+                print(f"{Fore.YELLOW}[!] User requested {provided_scheme}:// but {successful_scheme}:// responded. Using {successful} for scans.{Style.RESET_ALL}")
+
+    return successful
 
 # -------------------------
 # Tool runners (return result path or raise on error)
