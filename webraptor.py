@@ -123,7 +123,7 @@ def run_whatweb(target, output_dir):
     except subprocess.CalledProcessError as e:
         raise RuntimeError("whatweb failed") from e
 
-def run_nikto(target, output_dir, use_sudo=True):
+def run_nikto(target, output_dir):
     """Return path to nikto result file"""
     name = "nikto"
     print(f"{Fore.MAGENTA}[{name}] Starting...{Style.RESET_ALL}")
@@ -236,7 +236,7 @@ def main():
     # prepare tasks
     tasks = [
         ("whatweb", run_whatweb, (canonical_target, base_output), {}),
-        ("nikto", run_nikto, (canonical_target, base_output), {"use_sudo": not args.nikto_no_sudo}),
+        ("nikto", run_nikto, (canonical_target, base_output), {}),
         ("waybackurls", run_waybackurls, (canonical_target, base_output), {}),
         ("dirsearch", run_dirsearch, (canonical_target, base_output), {"wordlist": args.wordlist}),
         ("eyewitness", run_eyewitness, (canonical_target, base_output), {}),
