@@ -234,9 +234,15 @@ def main():
     parser.add_argument("--nikto-no-sudo", action="store_true", help="Run nikto without sudo (useful if sudo not available)")
     args = parser.parse_args()
 
-    user_target = args.target.strip()
+    # setup logging FIRST so every message prints
+    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    log_file = Path(args.output_dir) / "webraptor.log"
+    setup_logging(log_file)
 
-    # first check if target is up and determine canonical_target (with scheme)
+    print_banner()
+
+    # verify target is alive before scanning
+    user_target = args.target.strip()
     canonical_target = is_target_up(user_target)
     if not canonical_target:
         logging.error(f"{Fore.RED}[-] Aborting scans because target is not reachable: {user_target}{Style.RESET_ALL}")
@@ -245,16 +251,13 @@ def main():
     base_output = Path(args.output_dir) / sanitize_filename(canonical_target)
     base_output.mkdir(parents=True, exist_ok=True)
 
-    log_file = base_output / "scan.log"
-    setup_logging(log_file)
-
-    print_banner()
     # required external tools
     check_required_tools(["whatweb", "nikto", "dirsearch", "nuclei", "eyewitness", "waybackurls"])
 
-    logging.info(f"{Fore.BLUE}[*] Starting scan on {canonical_target}{Style.RESET_ALL}")
+    logging.info(f"{Fore.CYAN}[~] Target confirmed: {canonical_target}{Style.RESET_ALL}")
+    logging.info(f"{Fore.BLUE}[*] Starting scans...{Style.RESET_ALL}")
 
-    # prepare scan tasks
+    # list of tasks
     tasks = [
         ("whatweb", run_whatweb, (canonical_target, base_output), {}),
         ("nikto", run_nikto, (canonical_target, base_output), {"use_sudo": not args.nikto_no_sudo}),
@@ -264,30 +267,23 @@ def main():
         ("nuclei", run_nuclei, (canonical_target, base_output), {"template": args.nuclei_template}),
     ]
 
-    # run scans in parallel and display live progress
-    max_workers = max(1, args.threads)
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    # run with progress feedback
+    total = len(tasks)
+    with ThreadPoolExecutor(max_workers=args.threads) as executor:
         future_to_task = {}
-        start_times = {}
+        for i, (name, func, fargs, fkwargs) in enumerate(tasks, 1):
+            logging.info(f"{Fore.MAGENTA}[{i}/{total}] Launching {name}...{Style.RESET_ALL}")
+            future_to_task[executor.submit(func, *fargs, **fkwargs)] = (name, i)
 
-        # Submit tasks and immediately log that they're launching
-        for name, func, fargs, fkwargs in tasks:
-            logging.info(f"{Fore.MAGENTA}[+] Launching: {name}{Style.RESET_ALL}")
-            start_times[name] = time.time()
-            future = executor.submit(func, *fargs, **fkwargs)
-            future_to_task[future] = name
-
-        # As tasks complete, report results and elapsed time
         for future in as_completed(future_to_task):
-            name = future_to_task[future]
-            elapsed = time.time() - start_times.get(name, time.time())
+            name, idx = future_to_task[future]
             try:
                 future.result()
-                logging.info(f"{Fore.GREEN}[✓] {name} completed in {elapsed:.1f}s{Style.RESET_ALL}")
+                logging.info(f"{Fore.GREEN}[{idx}/{total}] {name} finished successfully.{Style.RESET_ALL}")
             except Exception as e:
-                logging.error(f"{Fore.RED}[✗] {name} failed after {elapsed:.1f}s: {e}{Style.RESET_ALL}")
+                logging.error(f"{Fore.RED}[{idx}/{total}] {name} failed: {e}{Style.RESET_ALL}")
 
-    logging.info(f"{Fore.GREEN}[+] All scans finished. Results are in: {base_output}{Style.RESET_ALL}")
+    logging.info(f"{Fore.GREEN}[+] All scans completed. Results in {base_output}{Style.RESET_ALL}")
 
 if __name__ == "__main__":
     main()
