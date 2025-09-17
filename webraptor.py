@@ -19,6 +19,11 @@ from colorama import Fore, Style
 import httpx
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+
+# initialize colorama
+colorama_init(autoreset=True)
+
+
 # -------------------------
 # UI / Banner
 # -------------------------
@@ -48,10 +53,6 @@ def print_banner():
         webraptor 🦖 — Hunt Smarter, Not Harder
     """
     print(f"{Fore.CYAN}{banner}{Style.RESET_ALL}")
-
-
-# initialize colorama
-colorama_init(autoreset=True)
 
 # -------------------------
 # UI / Banner
