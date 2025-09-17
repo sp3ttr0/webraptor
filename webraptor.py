@@ -15,7 +15,7 @@ import logging
 import signal
 import time
 from pathlib import Path
-from colorama import Fore, Style
+from colorama import Fore, Style, init as colorama_init
 import httpx
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
