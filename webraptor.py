@@ -53,17 +53,16 @@ def print_banner():
 # -------------------------
 # Logging / signal handling
 # -------------------------
-def setup_logging(log_file):
-    # Ensure parent exists
-    log_file.parent.mkdir(parents=True, exist_ok=True)
+def setup_logging(log_file: Path):
+    """Configure logging to console and file without timestamps."""
+    log_format = "%(message)s"  # no time, no level
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s %(message)s",
-        datefmt="%H:%M:%S",
+        format=log_format,
         handlers=[
-            logging.FileHandler(str(log_file)),
-            logging.StreamHandler(sys.stdout)
-        ]
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler(log_file, mode="w", encoding="utf-8"),
+        ],
     )
 
 def handle_sigint(signal_received, frame):
@@ -234,14 +233,14 @@ def main():
     parser.add_argument("--nikto-no-sudo", action="store_true", help="Run nikto without sudo (useful if sudo not available)")
     args = parser.parse_args()
 
-    # setup logging FIRST so every message prints
+    # logging before banner so all prints show
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     log_file = Path(args.output_dir) / "webraptor.log"
     setup_logging(log_file)
 
     print_banner()
 
-    # verify target is alive before scanning
+    # check target is up
     user_target = args.target.strip()
     canonical_target = is_target_up(user_target)
     if not canonical_target:
@@ -251,13 +250,11 @@ def main():
     base_output = Path(args.output_dir) / sanitize_filename(canonical_target)
     base_output.mkdir(parents=True, exist_ok=True)
 
-    # required external tools
     check_required_tools(["whatweb", "nikto", "dirsearch", "nuclei", "eyewitness", "waybackurls"])
 
     logging.info(f"{Fore.CYAN}[~] Target confirmed: {canonical_target}{Style.RESET_ALL}")
     logging.info(f"{Fore.BLUE}[*] Starting scans...{Style.RESET_ALL}")
 
-    # list of tasks
     tasks = [
         ("whatweb", run_whatweb, (canonical_target, base_output), {}),
         ("nikto", run_nikto, (canonical_target, base_output), {"use_sudo": not args.nikto_no_sudo}),
@@ -267,21 +264,19 @@ def main():
         ("nuclei", run_nuclei, (canonical_target, base_output), {"template": args.nuclei_template}),
     ]
 
-    # run with progress feedback
-    total = len(tasks)
     with ThreadPoolExecutor(max_workers=args.threads) as executor:
         future_to_task = {}
-        for i, (name, func, fargs, fkwargs) in enumerate(tasks, 1):
-            logging.info(f"{Fore.MAGENTA}[{i}/{total}] Launching {name}...{Style.RESET_ALL}")
-            future_to_task[executor.submit(func, *fargs, **fkwargs)] = (name, i)
+        for name, func, fargs, fkwargs in tasks:
+            logging.info(f"{Fore.MAGENTA}[{name}] Starting...{Style.RESET_ALL}")
+            future_to_task[executor.submit(func, *fargs, **fkwargs)] = name
 
         for future in as_completed(future_to_task):
-            name, idx = future_to_task[future]
+            name = future_to_task[future]
             try:
                 future.result()
-                logging.info(f"{Fore.GREEN}[{idx}/{total}] {name} finished successfully.{Style.RESET_ALL}")
+                logging.info(f"{Fore.GREEN}[{name}] Completed.{Style.RESET_ALL}")
             except Exception as e:
-                logging.error(f"{Fore.RED}[{idx}/{total}] {name} failed: {e}{Style.RESET_ALL}")
+                logging.error(f"{Fore.RED}[{name}] Failed. {e}{Style.RESET_ALL}")
 
     logging.info(f"{Fore.GREEN}[+] All scans completed. Results in {base_output}{Style.RESET_ALL}")
 
