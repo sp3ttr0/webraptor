@@ -178,7 +178,7 @@ def run_eyewitness(target, output_dir):
     eyewitness_dir = output_dir / "eyewitness"
     eyewitness_dir.mkdir(parents=True, exist_ok=True)
     try:
-        subprocess.run(["eyewitness", "--web", "-f", target, "-d", str(eyewitness_dir), "--no-prompt"],
+        subprocess.run(["eyewitness", "--web", "--single", target, "-d", str(eyewitness_dir), "--no-prompt"],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
         return str(eyewitness_dir)
     except subprocess.CalledProcessError as e:
