@@ -4,7 +4,6 @@
 # WebRaptor - Automated Web App Scanning Script (Single-target)
 # ---------------------------------------------------------------
 # Author: Howell King Jr. | Github: https://github.com/sp3ttr0
-# Refactor / updates: ChatGPT
 # ===============================================================
 
 import subprocess
@@ -50,25 +49,6 @@ def print_banner():
     """
     print(f"{Fore.CYAN}{banner}{Style.RESET_ALL}")
 
-#!/usr/bin/env python3
-
-# ===============================================================
-# WebRaptor - Automated Web App Scanning Script (Single-target)
-# ---------------------------------------------------------------
-# Author: Howell King Jr. | Github: https://github.com/sp3ttr0
-# Refactor / updates: ChatGPT
-# ===============================================================
-
-import subprocess
-import sys
-import shutil
-import re
-import argparse
-import signal
-from pathlib import Path
-from colorama import Fore, Style, init as colorama_init
-import httpx
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # initialize colorama
 colorama_init(autoreset=True)
