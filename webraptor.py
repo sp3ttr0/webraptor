@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 # ===============================================================
-# WebRaptor - Automated Web App Scanning Script (Single-target)
+# webraptor - Automated Web App Scanning Script
 # ---------------------------------------------------------------
 # Author: Howell King Jr. | Github: https://github.com/sp3ttr0
 # ===============================================================
