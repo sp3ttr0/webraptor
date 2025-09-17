@@ -54,19 +54,7 @@ def print_banner():
     """
     print(f"{Fore.CYAN}{banner}{Style.RESET_ALL}")
 
-# -------------------------
-# UI / Banner
-# -------------------------
-def print_banner():
-    banner = fr"""
-         webraptor 🦖 — Hunt Smarter, Not Harder
-           by sp3ttr0
-    """
-    print(f"{Fore.CYAN}{banner}{Style.RESET_ALL}")
 
-# -------------------------
-# Helpers (no logging)
-# -------------------------
 def check_tool(tool):
     return shutil.which(tool) is not None
 
@@ -224,7 +212,6 @@ def main():
     parser.add_argument("--nuclei-template", help="Custom Nuclei template path")
     parser.add_argument("--wordlist", help="Custom wordlist path for Dirsearch")
     parser.add_argument("--threads", type=int, default=6, help="Max concurrent scans (default: 6)")
-    parser.add_argument("--nikto-no-sudo", action="store_true", help="Run nikto without sudo (useful if sudo not available)")
     args = parser.parse_args()
 
     user_target = args.target.strip()
