@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 
-
 # ===============================================================
-# Raptor - Automated Web App Scanning Script
+# webraptor - Automated Web App Scanning Script
 # ---------------------------------------------------------------
 # Author: Howell King Jr. | Github: https://github.com/sp3ttr0
 # ===============================================================
-
 
 import subprocess
 import sys
@@ -17,41 +15,28 @@ import logging
 import signal
 from pathlib import Path
 from colorama import Fore, Style
+import httpx
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-
+# -------------------------
+# UI / Banner
+# -------------------------
 def print_banner():
     banner = fr"""
-    ⠀⠀⠀⠀⣠⣶⣶⠶⠖⠒⠒⠦⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-    ⠀⠀⢠⠞⠁⠙⠏⢀⣀⣠⣤⣤⢬⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-    ⠀⡰⠃⠀⠐⠒⠉⠉⠉⠉⠉⠉⣩⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀
-    ⢀⠃⠀⠀⠀⠀⠀⠀⣀⣀⠤⠚⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⡤⠒⣉⠥⠄⠀⠩⠽⢶⣤⣀⠀⠀⠀
-    ⢸⠀⠀⠀⠀⣼⠛⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⡴⢋⡴⠋⠀⠀⠀⠀⠀⠀⠀⠈⠙⠳⢦⡀
-    ⠘⠀⠀⠀⠀⢿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⠊⢠⠞⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-    ⠀⡇⠀⠀⠀⠀⠑⢤⣀⣀⣀⣠⠤⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⡴⠁⢠⡏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-    ⠀⢿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠂⠤⣀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⠤⠒⠁⠀⣰⠏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-    ⠀⠘⣷⠀⠀⠀⠀⠀⠀⠠⣀⠀⠀⠀⠀⠀⠀⠈⠉⠒⠒⠒⠒⠒⠂⠉⠁⠀⠀⠀⢀⡴⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-    ⠀⠀⠹⣆⠀⠀⣄⠀⠀⠀⠈⠑⢄⠀⠀⠀⡴⠀⠀⠀⢄⠀⠀⠀⠀⠀⠀⠀⢀⡴⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-    ⠀⠀⠀⠙⢦⡀⠈⠑⠢⢤⡤⠄⠀⢱⠀⢰⠁⠀⠀⠀⠈⢆⠀⠀⣀⡠⠔⠚⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-    ⠀⠀⠀⢰⠏⢹⣶⠒⣋⡥⣤⡄⠊⠁⠀⢸⡆⠀⠀⠀⠀⣸⠶⠋⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-    ⠀⠀⠀⢿⣿⣿⣿⡀⠘⣿⣶⡷⢤⢄⣀⠀⡇⠀⠀⠀⠀⢼⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-    ⠀⠀⠀⠀⠙⠻⠿⢧⠱⣤⡼⣧⡞⠀⢾⡉⠻⢦⡀⠀⠀⠈⠓⠲⢄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-    ⠀⠀⠀⠀⠀⠀⠀⠈⠒⠛⢿⡁⠀⠀⠠⡇⠀⠀⠙⣄⠀⠀⠀⠀⠈⢣⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-    ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠢⣄⠀⠑⢄⠀⠀⠈⠓⠤⢄⣀⣀⡀⢣⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-    ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣼⠃⢀⠼⠀⠀⠀⠀⠀⠀⠀⠀⠹⡀⢣⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-    ⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣀⡤⢋⣍⣴⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡇⠀⢣⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-    ⠀⠀⠀⠀⠀⠀⢰⣟⢻⠋⢿⠭⠋⡾⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⢴⣿⣰⠀⡎⠣⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-    ⠀⠀⠀⠀⠀⠀⠈⣉⡙⠒⢚⣒⠚⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠙⣿⡧⠻⠤⠿⡷⠀ {Style.BRIGHT} by sp3ttr0⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-    
          webraptor 🦖 — Hunt Smarter, Not Harder
+           by sp3ttr0
     """
     print(f"{Fore.CYAN}{banner}{Style.RESET_ALL}")
 
+# -------------------------
+# Logging / signal handling
+# -------------------------
 def setup_logging(log_file):
     logging.basicConfig(
         level=logging.INFO,
         format="%(message)s",
         handlers=[
-            logging.FileHandler(log_file),
+            logging.FileHandler(str(log_file)),
             logging.StreamHandler(sys.stdout)
         ]
     )
@@ -60,18 +45,66 @@ def handle_sigint(signal_received, frame):
     logging.warning(f"{Fore.RED}[!] Ctrl+C detected. Exiting...{Style.RESET_ALL}")
     sys.exit(0)
 
+# -------------------------
+# Helpers
+# -------------------------
 def check_tool(tool):
-    return shutil.which(tool) is not None 
+    return shutil.which(tool) is not None
 
 def check_required_tools(tools):
     missing = [tool for tool in tools if not check_tool(tool)]
     if missing:
         logging.error(f"{Fore.RED}[-] Missing required tools: {', '.join(missing)}{Style.RESET_ALL}")
+        logging.info(f"{Fore.YELLOW}[i] Install missing tools or remove them from the required list if you don't need them right now.{Style.RESET_ALL}")
         sys.exit(1)
 
 def sanitize_filename(url):
+    # remove scheme if present before sanitizing so folder names are tidy
+    url = re.sub(r'^https?://', '', url)
     return re.sub(r'[^a-zA-Z0-9.-]', '_', url)
 
+# -------------------------
+# Target verification
+# -------------------------
+def is_target_up(user_target, timeout=8.0):
+    """
+    Checks whether the target is reachable. Accepts full URLs (with scheme) or bare domains.
+    Returns the canonical URL (with scheme) that worked, or None if none responded.
+    """
+    logging.info(f"{Fore.BLUE}[*] Verifying target is up: {user_target}{Style.RESET_ALL}")
+
+    candidates = []
+    # If user provided a scheme, try it directly first
+    if re.match(r'^https?://', user_target, re.I):
+        candidates.append(user_target)
+    else:
+        # try https then http
+        candidates.append(f"https://{user_target}")
+        candidates.append(f"http://{user_target}")
+
+    for candidate in candidates:
+        try:
+            with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+                resp = client.get(candidate)
+                # treat 2xx and 3xx as up; treat <400 as responsive
+                if resp.status_code < 400:
+                    logging.info(f"{Fore.GREEN}[+] Target responsive: {candidate} (HTTP {resp.status_code}){Style.RESET_ALL}")
+                    return candidate
+                else:
+                    logging.warning(f"{Fore.YELLOW}[-] {candidate} returned HTTP {resp.status_code}{Style.RESET_ALL}")
+        except httpx.RequestError as e:
+            logging.debug(f"{Fore.YELLOW}[i] Request to {candidate} failed: {e}{Style.RESET_ALL}")
+            continue
+        except Exception as e:
+            logging.debug(f"{Fore.YELLOW}[i] Unexpected error when probing {candidate}: {e}{Style.RESET_ALL}")
+            continue
+
+    logging.error(f"{Fore.RED}[-] Target {user_target} is not reachable via HTTP/HTTPS.{Style.RESET_ALL}")
+    return None
+
+# -------------------------
+# Tool runners
+# -------------------------
 def run_whatweb(target, output_dir):
     logging.info(f"{Fore.BLUE}[*] Running WhatWeb...{Style.RESET_ALL}")
     whatweb_file = output_dir / "whatweb_results.txt"
@@ -84,30 +117,34 @@ def run_whatweb(target, output_dir):
     except Exception as e:
         logging.error(f"{Fore.RED}[-] Unexpected error while running WhatWeb: {e}{Style.RESET_ALL}")
 
-def run_nikto(target, output_dir):
+def run_nikto(target, output_dir, use_sudo=True):
     logging.info(f"{Fore.BLUE}[*] Running Nikto...{Style.RESET_ALL}")
     nikto_file = output_dir / "nikto_results.txt"
     try:
         with open(nikto_file, "w") as out:
-            subprocess.run(
-                ["sudo", "nikto", "-C", "all", "-host", target],
-                stdout=out, stderr=subprocess.DEVNULL, check=True
-            )
+            cmd = ["nikto", "-C", "all", "-host", target]
+            if use_sudo:
+                cmd.insert(0, "sudo")
+            subprocess.run(cmd, stdout=out, stderr=subprocess.DEVNULL, check=True)
         logging.info(f"{Fore.GREEN}[+] Nikto scan completed. Results saved to {nikto_file}{Style.RESET_ALL}")
     except subprocess.CalledProcessError:
         logging.error(f"{Fore.RED}[-] Nikto scan failed.{Style.RESET_ALL}")
     except Exception as e:
         logging.error(f"{Fore.RED}[-] Unexpected error while running Nikto: {e}{Style.RESET_ALL}")
 
-
 def run_waybackurls(target, output_dir):
     logging.info(f"{Fore.BLUE}[*] Running Wayback Machine URL collection...{Style.RESET_ALL}")
     wayback_dir = output_dir / "wayback_results"
     wayback_dir.mkdir(parents=True, exist_ok=True)
     out_file = wayback_dir / f"{sanitize_filename(target)}.txt"
-    with open(out_file, 'w') as out:
-        subprocess.run(["waybackurls", target], stdout=out, stderr=subprocess.DEVNULL)
-    logging.info(f"{Fore.GREEN}[+] Wayback URLs saved to {out_file}{Style.RESET_ALL}")
+    try:
+        with open(out_file, 'w') as out:
+            subprocess.run(["waybackurls", target], stdout=out, stderr=subprocess.DEVNULL, check=True)
+        logging.info(f"{Fore.GREEN}[+] Wayback URLs saved to {out_file}{Style.RESET_ALL}")
+    except subprocess.CalledProcessError:
+        logging.error(f"{Fore.RED}[-] waybackurls failed.{Style.RESET_ALL}")
+    except Exception as e:
+        logging.error(f"{Fore.RED}[-] Unexpected error while running waybackurls: {e}{Style.RESET_ALL}")
 
 def run_dirsearch(target, output_dir, wordlist=None):
     logging.info(f"{Fore.BLUE}[*] Running Dirsearch...{Style.RESET_ALL}")
@@ -122,15 +159,26 @@ def run_dirsearch(target, output_dir, wordlist=None):
     ]
     if wordlist:
         cmd.extend(["-w", wordlist])
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    logging.info(f"{Fore.GREEN}[+] Dirsearch results saved to {out_file}{Style.RESET_ALL}")
+    try:
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        logging.info(f"{Fore.GREEN}[+] Dirsearch results saved to {out_file}{Style.RESET_ALL}")
+    except subprocess.CalledProcessError:
+        logging.error(f"{Fore.RED}[-] Dirsearch failed.{Style.RESET_ALL}")
+    except Exception as e:
+        logging.error(f"{Fore.RED}[-] Unexpected error while running Dirsearch: {e}{Style.RESET_ALL}")
 
 def run_eyewitness(target, output_dir):
     logging.info(f"{Fore.BLUE}[*] Running EyeWitness...{Style.RESET_ALL}")
     eyewitness_dir = output_dir / "eyewitness"
-    subprocess.run(["eyewitness", "--web", "-f", target, "-d", str(eyewitness_dir), "--no-prompt"],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    logging.info(f"{Fore.GREEN}[+] EyeWitness report saved in {eyewitness_dir}{Style.RESET_ALL}")
+    eyewitness_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(["eyewitness", "--web", "-f", target, "-d", str(eyewitness_dir), "--no-prompt"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        logging.info(f"{Fore.GREEN}[+] EyeWitness report saved in {eyewitness_dir}{Style.RESET_ALL}")
+    except subprocess.CalledProcessError:
+        logging.error(f"{Fore.RED}[-] EyeWitness failed.{Style.RESET_ALL}")
+    except Exception as e:
+        logging.error(f"{Fore.RED}[-] Unexpected error while running EyeWitness: {e}{Style.RESET_ALL}")
 
 def run_nuclei(target, output_dir, template=None):
     logging.info(f"{Fore.BLUE}[*] Running Nuclei...{Style.RESET_ALL}")
@@ -138,41 +186,75 @@ def run_nuclei(target, output_dir, template=None):
     cmd = ["nuclei", "-u", target, "-es", "info,unknown", "-etags", "ssl,dns,http", "-o", str(output_file)]
     if template:
         cmd.extend(["-t", template])
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    logging.info(f"{Fore.GREEN}[+] Nuclei results saved to {output_file}{Style.RESET_ALL}")
+    try:
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        logging.info(f"{Fore.GREEN}[+] Nuclei results saved to {output_file}{Style.RESET_ALL}")
+    except subprocess.CalledProcessError:
+        logging.error(f"{Fore.RED}[-] Nuclei scan failed.{Style.RESET_ALL}")
+    except Exception as e:
+        logging.error(f"{Fore.RED}[-] Unexpected error while running Nuclei: {e}{Style.RESET_ALL}")
 
+# -------------------------
+# Main
+# -------------------------
 def main():
     signal.signal(signal.SIGINT, handle_sigint)
 
-    parser = argparse.ArgumentParser(description="Raptor")
-    parser.add_argument("target", help="Target URL (e.g. https://example.com)")
+    parser = argparse.ArgumentParser(description="WebRaptor — Single-target web application scanner")
+    parser.add_argument("target", help="Target URL or domain (e.g. https://example.com or example.com)")
     parser.add_argument("--output-dir", default="results", help="Output directory")
     parser.add_argument("--nuclei-template", help="Custom Nuclei template path")
     parser.add_argument("--wordlist", help="Custom wordlist path for Dirsearch")
+    parser.add_argument("--threads", type=int, default=6, help="Max concurrent scans (default: 6)")
+    parser.add_argument("--nikto-no-sudo", action="store_true", help="Run nikto without sudo (useful if sudo not available)")
     args = parser.parse_args()
 
-    target = args.target.strip()
-    base_output = Path(args.output_dir) / sanitize_filename(target)
+    user_target = args.target.strip()
+
+    # first check if target is up and determine canonical_target (with scheme)
+    canonical_target = is_target_up(user_target)
+    if not canonical_target:
+        logging.error(f"{Fore.RED}[-] Aborting scans because target is not reachable: {user_target}{Style.RESET_ALL}")
+        sys.exit(1)
+
+    base_output = Path(args.output_dir) / sanitize_filename(canonical_target)
     base_output.mkdir(parents=True, exist_ok=True)
 
     log_file = base_output / "scan.log"
     setup_logging(log_file)
 
     print_banner()
+    # required external tools
     check_required_tools(["whatweb", "nikto", "dirsearch", "nuclei", "eyewitness", "waybackurls"])
 
-    logging.info(f"{Fore.BLUE}[*] Starting scan on {target}{Style.RESET_ALL}")
+    logging.info(f"{Fore.BLUE}[*] Starting scan on {canonical_target}{Style.RESET_ALL}")
 
-    run_whatweb(target, base_output)
-    run_nikto(target, base_output)
-    run_waybackurls(target, base_output)
-    run_dirsearch(target, base_output, wordlist=args.wordlist)
-    run_eyewitness(target, base_output)
-    run_nuclei(target, base_output, args.nuclei_template)
+    # prepare scan tasks
+    tasks = [
+        ("whatweb", run_whatweb, (canonical_target, base_output), {}),
+        ("nikto", run_nikto, (canonical_target, base_output), {"use_sudo": not args.nikto_no_sudo}),
+        ("waybackurls", run_waybackurls, (canonical_target, base_output), {}),
+        ("dirsearch", run_dirsearch, (canonical_target, base_output), {"wordlist": args.wordlist}),
+        ("eyewitness", run_eyewitness, (canonical_target, base_output), {}),
+        ("nuclei", run_nuclei, (canonical_target, base_output), {"template": args.nuclei_template}),
+    ]
+
+    # run scans in parallel
+    max_workers = max(1, args.threads)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_task = {}
+        for name, func, fargs, fkwargs in tasks:
+            future = executor.submit(func, *fargs, **fkwargs)
+            future_to_task[future] = name
+
+        for future in as_completed(future_to_task):
+            name = future_to_task[future]
+            try:
+                future.result()
+            except Exception as e:
+                logging.error(f"{Fore.RED}[-] {name} task failed: {e}{Style.RESET_ALL}")
 
     logging.info(f"{Fore.GREEN}[+] Scan completed. Results in {base_output}{Style.RESET_ALL}")
 
 if __name__ == "__main__":
     main()
-
-
