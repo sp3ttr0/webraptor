@@ -6,27 +6,34 @@
 # Author: Howell King Jr. | Github: https://github.com/sp3ttr0
 # ===============================================================
 
+import argparse
+import copy
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
+import hashlib
+import html
+import ipaddress
+import json
+import math
+import os
+from pathlib import Path
+import re
+import shutil
+import signal
 import subprocess
 import sys
-import shutil
-import re
-import argparse
-import logging
-import signal
+import tempfile
+import threading
 import time
-from pathlib import Path
+from urllib.parse import quote, urlsplit, urlunsplit
+import uuid
+
 from colorama import Fore, Style, init as colorama_init
 import httpx
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
-
-# initialize colorama
 colorama_init(autoreset=True)
 
 
-# -------------------------
-# UI / Banner
-# -------------------------
 def print_banner():
     banner = fr"""
         ⣠⣶⣶⠶⠖⠒⠒⠦⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
@@ -55,250 +62,730 @@ def print_banner():
     print(f"{Fore.CYAN}{banner}{Style.RESET_ALL}")
 
 
-def check_tool(tool):
-    return shutil.which(tool) is not None
+MODULES = ('curl', 'whatweb', 'nikto', 'waybackurls', 'dirsearch', 'nuclei', 'testssl', 'sslscan')
+TLS_MODULES = {'testssl', 'sslscan'}
+AUTH_MODULES = {'testssl', 'curl', 'whatweb', 'nikto', 'dirsearch', 'nuclei'}
+STOP = threading.Event()
 
-def check_required_tools(tools):
-    missing = [tool for tool in tools if not check_tool(tool)]
-    if missing:
-        print(f"{Fore.RED}[-] Missing required tools: {', '.join(missing)}{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}[i] Install missing tools or remove them from the required list if you don't need them right now.{Style.RESET_ALL}")
-        sys.exit(1)
 
-def sanitize_filename(url):
-    # remove scheme if present before sanitizing so folder names are tidy
-    url = re.sub(r'^https?://', '', url)
-    return re.sub(r'[^a-zA-Z0-9.-]', '_', url)
+def timestamp():
+    return datetime.now(timezone.utc).isoformat()
 
-def handle_sigint(signal_received, frame):
-    print(f"{Fore.RED}[!] Ctrl+C detected. Exiting...{Style.RESET_ALL}")
-    sys.exit(0)
 
-# -------------------------
-# Target verification
-# -------------------------
-def is_target_up(user_target, timeout=8.0):
-    """
-    Checks whether the target is reachable.
+def positive_int(value):
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError('must be a positive integer')
+    return number
 
-    Behavior:
-    - If user_target includes a scheme (http:// or https://), try that scheme first and prefer it.
-      If it fails but the other scheme works, print a warning and switch to the working scheme.
-    - If no scheme provided, try https:// then http://.
 
-    Returns the canonical URL (with scheme) that will be used for scans, or None if none responded.
-    """
-    print(f"{Fore.BLUE}[*] Verifying target is up: {user_target}{Style.RESET_ALL}")
+def positive_float(value):
+    number = float(value)
+    if not math.isfinite(number) or number <= 0:
+        raise argparse.ArgumentTypeError('must be a finite positive number')
+    return number
 
-    # Normalize whitespace
-    user_target = user_target.strip()
 
-    # Determine whether user provided a scheme explicitly
-    user_provided_scheme = bool(re.match(r'^https?://', user_target, re.I))
+def normalize_target(raw):
+    """Return a normalized URL and whether its scheme was explicitly supplied."""
+    raw = raw.strip()
+    explicit = '://' in raw
+    try:
+        if not raw or any(ord(c) <= 32 or ord(c) == 127 for c in raw):
+            raise ValueError()
+        parsed = urlsplit(raw if explicit else 'https://' + raw)
+        if (parsed.scheme not in ('http', 'https') or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.fragment or '\\' in raw):
+            raise ValueError()
+        host = parsed.hostname.encode('idna').decode('ascii').lower().rstrip('.')
+        if ':' in host:
+            host = '[' + str(ipaddress.IPv6Address(host)) + ']'
+        elif not all(re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', label)
+                     for label in host.split('.')):
+            raise ValueError()
+        port = parsed.port
+        if port == 0:
+            raise ValueError()
+        if port and (parsed.scheme, port) not in (('http', 80), ('https', 443)):
+            host += ':' + str(port)
+        return urlunsplit((parsed.scheme, host, parsed.path or '/', parsed.query, '')), explicit
+    except (ValueError, UnicodeError):
+        raise ValueError('Expected a domain or HTTP(S) URL without credentials, whitespace, or fragments') from None
 
-    candidates = []
-    if user_provided_scheme:
-        # Try the user-specified candidate first
-        candidates.append(user_target)
-        # Also prepare the alternate scheme for fallback
-        alt = None
-        if user_target.lower().startswith("https://"):
-            alt = "http://" + re.sub(r'^https?://', '', user_target, flags=re.I)
-        else:
-            alt = "https://" + re.sub(r'^https?://', '', user_target, flags=re.I)
-        candidates.append(alt)
-    else:
-        # No scheme provided: prefer https, then http
-        candidates.append(f"https://{user_target}")
-        candidates.append(f"http://{user_target}")
 
-    successful = None
-    for candidate in candidates:
-        try:
-            with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-                resp = client.get(candidate)
-                if resp.status_code < 400:
-                    successful = candidate
-                    print(f"{Fore.GREEN}[+] Target responsive: {candidate} (HTTP {resp.status_code}){Style.RESET_ALL}")
-                    break
-                else:
-                    print(f"{Fore.YELLOW}[-] {candidate} returned HTTP {resp.status_code}{Style.RESET_ALL}")
-        except Exception:
-            # try next candidate
+def target_key(url):
+    parsed = urlsplit(url)
+    slug = re.sub(r'[^a-zA-Z0-9.-]', '_', parsed.netloc)[:80]
+    return slug + '-' + hashlib.sha256(url.encode()).hexdigest()[:12]
+
+
+class Redactor:
+    def __init__(self, headers=()):
+        secrets = set()
+        for name, value in headers:
+            secrets.add(value)
+            if name.lower() in ('authorization', 'proxy-authorization'):
+                secrets.add(value.split(' ', 1)[-1])
+            if name.lower() == 'cookie':
+                secrets.update(part.partition('=')[2].strip() for part in value.split(';'))
+        self.secrets = sorted((s for s in secrets if s), key=len, reverse=True)
+        variants = set(self.secrets)
+        for value in self.secrets:
+            variants.update((quote(value, safe=''), html.escape(value),
+                             json.dumps(value)[1:-1]))
+        self.pattern = re.compile('|'.join(re.escape(s) for s in sorted(variants, key=len, reverse=True))) if variants else None
+
+    def __call__(self, text):
+        text = str(text)
+        if self.pattern:
+            text = self.pattern.sub('[REDACTED]', text)
+        # Also redact newly issued cookies and authorization lines in tool output.
+        return re.sub(r'(?im)^(\s*(?:authorization|proxy-authorization|cookie|set-cookie)\s*:\s*)[^\r\n]+',
+                      r'\1[REDACTED]', text)
+
+
+def read_headers(args):
+    lines = list(args.header)
+    if args.headers_file:
+        lines.extend(Path(args.headers_file).read_text(encoding='utf-8').splitlines())
+    if args.cookie:
+        lines.append('Cookie: ' + args.cookie)
+    if args.cookie_file:
+        lines.append('Cookie: ' + Path(args.cookie_file).read_text(encoding='utf-8').strip())
+    headers = {}
+    for line in lines:
+        if not line.strip() or line.lstrip().startswith('#'):
             continue
+        name, separator, value = line.partition(':')
+        name, value = name.strip(), value.strip()
+        if (not separator or not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name)
+                or not value or any(ord(c) < 32 or ord(c) > 126 for c in value)):
+            raise ValueError('Invalid header: use one ASCII Name: value per line')
+        if name.lower() in headers:
+            raise ValueError('Duplicate header names are not supported')
+        headers[name.lower()] = (name, value)
+    return list(headers.values())
 
-    if not successful:
-        print(f"{Fore.RED}[-] Target {user_target} is not reachable via HTTP/HTTPS.{Style.RESET_ALL}")
-        return None
 
-    # If user explicitly provided a scheme but it wasn't the one that succeeded,
-    # inform the user we are switching to the working scheme.
-    if user_provided_scheme:
-        provided = user_target if re.match(r'^https?://', user_target, re.I) else None
-        # provided variable always user_target (with scheme) here
-        if provided and not successful.lower().startswith(provided.split("://",1)[0]):
-            # Determine if schemes differ
-            provided_scheme = re.match(r'^(https?)://', user_target, re.I).group(1).lower()
-            successful_scheme = re.match(r'^(https?)://', successful, re.I).group(1).lower()
-            if provided_scheme != successful_scheme:
-                print(f"{Fore.YELLOW}[!] User requested {provided_scheme}:// but {successful_scheme}:// responded. Using {successful} for scans.{Style.RESET_ALL}")
-
-    return successful
-
-# -------------------------
-# Tool runners (return result path or raise on error)
-# -------------------------
-def run_whatweb(target, output_dir):
-    """Return path to whatweb result file"""
-    name = "whatweb"
-    print(f"{Fore.MAGENTA}[{name}] Starting...{Style.RESET_ALL}")
-    out_path = output_dir / "whatweb_results.txt"
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description='WebRaptor — web application scanning workflow')
+    parser.add_argument('target', nargs='?', help='Domain or HTTP(S) URL')
+    parser.add_argument('-l', '--targets-file', help='One target per line; # comments allowed')
+    parser.add_argument('--check-tools', action='store_true', help='Check versions and required CLI flags without scanning')
+    parser.add_argument('--resume', help='Previous batch directory or run.json; writes a new run')
+    parser.add_argument('--no-progress', action='store_true', help='Disable live progress on stderr')
+    parser.add_argument('--output-dir', default='results')
+    parser.add_argument('--modules', default=','.join(MODULES), help='Comma-separated module names')
+    parser.add_argument('--exclude', action='append', default=[], help='Comma-separated modules to omit; repeatable, applied after --modules')
+    parser.add_argument('--threads', type=positive_int, default=6, help='Global maximum active scanner processes (default: 6)')
+    parser.add_argument('--target-concurrency', type=positive_int, default=1, help='Concurrent target workflows (default: 1)')
+    parser.add_argument('--tool-timeout', type=positive_float, default=1800, help='Wall-clock seconds per module (default: 1800)')
+    parser.add_argument('--probe-timeout', type=positive_float, default=8, help='HTTP probe timeout in seconds (default: 8)')
+    parser.add_argument('--allow-scheme-fallback', action='store_true', help='Allow explicit URLs to try the other scheme')
+    parser.add_argument('--insecure', action='store_true', help='Disable certificate verification for the reachability probe and curl')
+    parser.add_argument('--nuclei-template')
+    parser.add_argument('--wordlist')
+    parser.add_argument('--nuclei-rate', type=positive_int, default=20, help='Nuclei requests/sec per process (default: 20)')
+    parser.add_argument('--dirsearch-rate', type=positive_int, default=10, help='Dirsearch requests/sec per process (default: 10)')
+    parser.add_argument('--dirsearch-threads', type=positive_int, default=10)
+    parser.add_argument('--whatweb-wait', type=positive_int, default=1, help='Seconds between WhatWeb connections (default: 1)')
+    parser.add_argument('--nikto-pause', type=positive_float, default=1, help='Seconds between Nikto requests (default: 1)')
+    parser.add_argument('-H', '--header', action='append', default=[], help='HTTP header; repeatable')
+    parser.add_argument('--headers-file', help='File of HTTP headers, one Name: value per line')
+    cookie = parser.add_mutually_exclusive_group()
+    cookie.add_argument('--cookie', help='Cookie header value')
+    cookie.add_argument('--cookie-file', help='File containing a Cookie header value')
+    tokens = list(sys.argv[1:] if argv is None else argv)
+    args = parser.parse_args(tokens)
+    supplied = {token.split('=', 1)[0] for token in tokens if token.startswith('-')}
+    args.resume_data = None
+    if args.resume:
+        if args.target or args.targets_file or args.check_tools:
+            parser.error('--resume cannot be combined with targets or --check-tools')
+        try:
+            args.resume_data = load_resume(args.resume)
+        except (OSError, ValueError, TypeError, KeyError):
+            parser.error('Invalid or unsupported resume manifest; use a batch run.json from this version')
+        for key, value in args.resume_data['settings'].items():
+            option = '--' + key.replace('_', '-')
+            if option in supplied and key not in ('threads', 'target_concurrency', 'tool_timeout', 'probe_timeout', 'modules'):
+                parser.error(option + ' cannot be changed when resuming; start a new scan instead')
+            if option not in supplied:
+                setattr(args, key, ','.join(value) if key == 'modules' else value)
+        if '--output-dir' not in supplied:
+            args.output_dir = str(args.resume_data['base'])
+    elif not args.check_tools and bool(args.target) == bool(args.targets_file):
+        parser.error('Provide either target or --targets-file')
+    elif args.check_tools and (args.target or args.targets_file):
+        parser.error('--check-tools does not take a target')
+    args.modules = list(dict.fromkeys(s.strip() for s in args.modules.split(',')))
+    if not args.modules or any(m not in MODULES for m in args.modules):
+        parser.error('--modules must contain names from: ' + ','.join(MODULES))
+    excluded = {name.strip() for group in args.exclude for name in group.split(',')}
+    if any(name not in MODULES for name in excluded):
+        parser.error('--exclude must contain names from: ' + ','.join(MODULES))
+    args.modules = [name for name in args.modules if name not in excluded]
+    if not args.modules:
+        parser.error('No modules remain after --exclude')
     try:
-        with open(out_path, "w") as out:
-            subprocess.run(["whatweb", "-v", target], stdout=out, stderr=subprocess.DEVNULL, check=True)
-        return str(out_path)
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError("whatweb failed") from e
+        for option in ('nuclei_template', 'wordlist', 'headers_file', 'cookie_file', 'targets_file'):
+            value = getattr(args, option)
+            if value:
+                path = Path(value).expanduser().resolve()
+                if not path.exists() or (option != 'nuclei_template' and not path.is_file()):
+                    raise ValueError('Invalid --' + option.replace('_', '-') + ' path')
+                setattr(args, option, str(path))
+        args.headers = read_headers(args)
+        lines = Path(args.targets_file).read_text(encoding='utf-8').splitlines() if args.targets_file else ([args.target] if args.target else [])
+        targets = {}
+        for line in lines:
+            if not line.strip() or line.lstrip().startswith('#'):
+                continue
+            url, explicit = normalize_target(line)
+            # Explicit scheme wins if both the bare domain and its HTTPS URL occur.
+            targets[url] = targets.get(url, False) or explicit
+        if args.resume_data:
+            targets = dict(args.resume_data['targets'])
+            expected = set(args.resume_data['header_names'])
+            if expected != {name.lower() for name, _ in args.headers}:
+                raise ValueError('Resume requires the original header names; resupply headers/cookies (values are never saved)')
+            if any(m not in args.resume_data['settings']['modules'] for m in args.modules):
+                raise ValueError('Resume can only select modules from the original run')
+        if not targets and not args.check_tools:
+            raise ValueError('Target list is empty')
+        args.targets = list(targets.items())
+        if args.headers and len({urlsplit(u).netloc for u in targets}) > 1:
+            raise ValueError('Use separate runs for authenticated targets on different hosts or ports')
+    except (ValueError, OSError, UnicodeError) as exc:
+        # Do not echo arguments or file contents that may contain credentials.
+        parser.error(str(exc) if isinstance(exc, ValueError) else 'Could not read input file')
+    return args
 
-def run_nikto(target, output_dir):
-    """Return path to nikto result file"""
-    name = "nikto"
-    print(f"{Fore.MAGENTA}[{name}] Starting...{Style.RESET_ALL}")
-    out_path = output_dir / "nikto_results.txt"
+
+# Scan settings are persisted without authentication values or input-file contents.
+SAVED_SETTINGS = ('modules', 'threads', 'target_concurrency', 'tool_timeout', 'probe_timeout',
+                  'allow_scheme_fallback', 'insecure', 'nuclei_template', 'wordlist',
+                  'nuclei_rate', 'dirsearch_rate', 'dirsearch_threads', 'whatweb_wait', 'nikto_pause')
+
+
+def load_resume(location):
+    manifest = Path(location).expanduser().resolve()
+    if manifest.is_dir():
+        manifest /= 'run.json'
+    data = json.loads(manifest.read_text(encoding='utf-8'))
+    if data.get('schema_version') != 1 or data.get('kind') != 'webraptor-run':
+        raise ValueError('Unknown manifest')
+    if manifest.parent.parent.name != '_runs' or data['run_id'] != manifest.parent.name:
+        raise ValueError('Manifest must remain in its original batch layout')
+    if set(data['settings']) != set(SAVED_SETTINGS):
+        raise ValueError('Incomplete settings')
+    settings = data['settings']
+    if (not isinstance(settings['modules'], list) or not settings['modules']
+            or any(m not in MODULES for m in settings['modules'])):
+        raise ValueError('Invalid modules')
+    for key in ('threads', 'target_concurrency', 'nuclei_rate', 'dirsearch_rate', 'dirsearch_threads', 'whatweb_wait'):
+        if type(settings[key]) is not int or settings[key] < 1:
+            raise ValueError('Invalid numeric settings')
+    for key in ('tool_timeout', 'probe_timeout', 'nikto_pause'):
+        if type(settings[key]) not in (int, float) or not math.isfinite(settings[key]) or settings[key] <= 0:
+            raise ValueError('Invalid timeout settings')
+    for key in ('insecure', 'allow_scheme_fallback'):
+        if type(settings[key]) is not bool:
+            raise ValueError('Invalid boolean setting')
+    for key in ('wordlist', 'nuclei_template'):
+        if settings[key] is not None and not isinstance(settings[key], str):
+            raise ValueError('Invalid path setting')
+    if not isinstance(data['header_names'], list) or not all(isinstance(n, str) for n in data['header_names']):
+        raise ValueError('Invalid headers')
+    if not isinstance(data['targets'], list) or not data['targets']:
+        raise ValueError('Invalid targets')
+    for target, explicit in data['targets']:
+        if '[REDACTED]' in target or normalize_target(target)[0] != target or type(explicit) is not bool:
+            raise ValueError('Target unavailable for resume')
+    data['base'] = manifest.parent.parent.parent
+    return data
+
+
+def file_digest(path):
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def reusable_results(target, args):
+    if not args.resume_data:
+        return {}
+    data = args.resume_data
+    folder = data['base'] / target_key(target) / data['run_id']
     try:
-        with open(out_path, "w") as out:
-            cmd = ["nikto", "-C", "all", "-host", target]
-            subprocess.run(cmd, stdout=out, stderr=subprocess.DEVNULL, check=True)
-        return str(out_path)
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError("nikto failed") from e
+        summary = json.loads((folder / 'summary.json').read_text(encoding='utf-8'))
+        if summary['target'] != target:
+            return {}
+        reusable = {}
+        for result in summary['modules']:
+            module = result['module']
+            if module not in args.modules or result['status'] not in ('completed', 'not_applicable'):
+                continue
+            valid = True
+            artifacts = result['artifacts']
+            if result['status'] == 'completed' and not artifacts:
+                continue
+            for relative in artifacts:
+                path = (folder / relative).resolve()
+                if (not path.is_relative_to(folder.resolve()) or not path.is_file()
+                        or result.get('artifact_hashes', {}).get(relative) != file_digest(path)):
+                    valid = False
+                    break
+            if valid:
+                reusable[module] = (folder, result)
+        return reusable
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
 
-def run_waybackurls(target, output_dir):
-    """Return path to wayback urls file"""
-    name = "waybackurls"
-    print(f"{Fore.MAGENTA}[{name}] Starting...{Style.RESET_ALL}")
-    wayback_dir = output_dir / "wayback_results"
-    wayback_dir.mkdir(parents=True, exist_ok=True)
-    out_path = wayback_dir / f"{sanitize_filename(target)}.txt"
+
+class Progress:
+    def __init__(self, targets, modules, enabled=True, interval=2.0):
+        self.enabled, self.interval = enabled, interval
+        self.lock, self.finished = threading.Lock(), threading.Event()
+        self.started = time.monotonic()
+        self.states = {(target_key(t), m): ('queued', self.started) for t, _ in targets for m in modules}
+        self.worker = None
+
+    def update(self, target, module, status):
+        if not self.enabled:
+            return
+        with self.lock:
+            key = (target_key(target), module)
+            old, since = self.states.get(key, ('queued', time.monotonic()))
+            self.states[key] = (status, time.monotonic())
+            elapsed = time.monotonic() - since if old == 'running' else 0
+            print(f'[{key[0]}] {module}: {status} ({elapsed:.1f}s)', file=sys.stderr, flush=True)
+
+    def render(self):
+        if not self.enabled:
+            return
+        with self.lock:
+            counts = {}
+            running = []
+            now = time.monotonic()
+            for (target, module), (state, since) in self.states.items():
+                counts[state] = counts.get(state, 0) + 1
+                if state == 'running':
+                    running.append(f'{target}/{module} {now - since:.0f}s')
+            line = f'[progress {now - self.started:.0f}s] ' + ', '.join(f'{k}={v}' for k, v in sorted(counts.items()))
+            if running:
+                line += ' | ' + '; '.join(running)
+            print(line, file=sys.stderr, flush=True)
+
+    def __enter__(self):
+        if self.enabled:
+            self.render()
+            def monitor():
+                while not self.finished.wait(self.interval):
+                    self.render()
+            self.worker = threading.Thread(target=monitor, daemon=True)
+            self.worker.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.finished.set()
+        if self.worker:
+            self.worker.join()
+        self.render()
+
+
+def probe_target(url, explicit, args, stop):
+    candidates = [url]
+    if not explicit or args.allow_scheme_fallback:
+        parsed = urlsplit(url)
+        candidates.append(urlunsplit(parsed._replace(scheme='http' if parsed.scheme == 'https' else 'https')))
+    errors = []
+    for candidate in candidates:
+        if stop.is_set():
+            break
+        try:
+            with httpx.Client(timeout=args.probe_timeout, verify=not args.insecure,
+                              follow_redirects=False, headers=dict(args.headers)) as client:
+                # Reading just headers avoids waiting for large/streaming bodies.
+                with client.stream('GET', candidate) as response:
+                    return candidate, {'status': 'reachable', 'http_status': response.status_code,
+                                       'scheme_changed': candidate != url}
+        except httpx.RequestError as exc:
+            errors.append(type(exc).__name__)
+    return None, {'status': 'cancelled' if stop.is_set() else 'unreachable', 'errors': errors}
+
+
+def terminate_group(proc, grace=1.0):
+    """Terminate the whole process group, even if its original leader exited."""
     try:
-        with open(out_path, "w") as out:
-            subprocess.run(["waybackurls", target], stdout=out, stderr=subprocess.DEVNULL, check=True)
-        return str(out_path)
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError("waybackurls failed") from e
-
-def run_dirsearch(target, output_dir, wordlist=None):
-    """Return path to dirsearch output file"""
-    name = "dirsearch"
-    print(f"{Fore.MAGENTA}[{name}] Starting...{Style.RESET_ALL}")
-    dirsearch_dir = output_dir / "dirsearch_results"
-    dirsearch_dir.mkdir(parents=True, exist_ok=True)
-    out_path = dirsearch_dir / f"{sanitize_filename(target)}.txt"
-    cmd = [
-        "dirsearch", "-u", target,
-        "-e", "php,asp,aspx,jsp,html,js,json",
-        "--random-agent", "-t", "10", "-F",
-        "-o", str(out_path)
-    ]
-    if wordlist:
-        cmd.extend(["-w", wordlist])
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        proc.wait()
+        return
+    deadline = time.monotonic() + grace
+    while time.monotonic() < deadline:
+        proc.poll()  # Reap leader before checking whether descendants remain.
+        try:
+            os.killpg(proc.pid, 0)
+        except ProcessLookupError:
+            proc.wait()
+            return
+        time.sleep(0.05)
     try:
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-        return str(out_path)
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError("dirsearch failed") from e
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    proc.wait()
 
-def run_eyewitness(target, output_dir):
-    """Return path to eyewitness directory"""
-    name = "eyewitness"
-    print(f"{Fore.MAGENTA}[{name}] Starting...{Style.RESET_ALL}")
-    eyewitness_dir = output_dir / "eyewitness"
-    eyewitness_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        subprocess.run(["eyewitness", "--web", "--single", target, "-d", str(eyewitness_dir), "--no-prompt"],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-        return str(eyewitness_dir)
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError("eyewitness failed") from e
 
-def run_nuclei(target, output_dir, template=None):
-    """Return path to nuclei results file"""
-    name = "nuclei"
-    print(f"{Fore.MAGENTA}[{name}] Starting...{Style.RESET_ALL}")
-    out_path = output_dir / "nuclei_results.txt"
-    cmd = ["nuclei", "-u", target, "-etags", "ssl,dns,http", "-o", str(out_path)]
-    if template:
-        cmd.extend(["-t", template])
-    try:
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-        return str(out_path)
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError("nuclei failed") from e
+def copy_redacted(source, destination, redact):
+    source.seek(0)
+    with destination.open('w', encoding='utf-8') as output:
+        for line in source:
+            output.write(redact(line.decode('utf-8', errors='replace')))
 
-# -------------------------
-# Main
-# -------------------------
-def main():
-    signal.signal(signal.SIGINT, handle_sigint)
 
-    parser = argparse.ArgumentParser(description="WebRaptor — Single-target web application scanner")
-    parser.add_argument("target", help="Target URL or domain (e.g. https://example.com or example.com)")
-    parser.add_argument("--output-dir", default="results", help="Output directory")
-    parser.add_argument("--nuclei-template", help="Custom Nuclei template path")
-    parser.add_argument("--wordlist", help="Custom wordlist path for Dirsearch")
-    parser.add_argument("--threads", type=int, default=6, help="Max concurrent scans (default: 6)")
-    args = parser.parse_args()
+def run_command(cmd, stdout_path, stderr_path, timeout, stop, redact):
+    started = time.monotonic()
+    result = {'status': 'cancelled', 'exit_code': None, 'duration_seconds': 0.0}
+    if stop.is_set():
+        return result
+    # Anonymous temporary streams prevent credentials echoed by a scanner from
+    # appearing in persistent console logs before redaction.
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        proc = None
+        try:
+            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out,
+                                    stderr=err, start_new_session=True)
+            while True:
+                if stop.is_set():
+                    result['status'] = 'cancelled'
+                    terminate_group(proc)
+                    break
+                if time.monotonic() - started >= timeout:
+                    result['status'] = 'timed_out'
+                    terminate_group(proc)
+                    break
+                code = proc.poll()
+                if code is not None:
+                    result.update(status='completed' if code == 0 else 'failed', exit_code=code)
+                    # Clean up any scanner descendants still alive after exit.
+                    terminate_group(proc)
+                    break
+                stop.wait(0.05)
+        except OSError as exc:
+            result.update(status='failed', error=type(exc).__name__)
+        finally:
+            if proc is not None and proc.poll() is None:
+                terminate_group(proc)
+            copy_redacted(out, stdout_path, redact)
+            copy_redacted(err, stderr_path, redact)
+    result['duration_seconds'] = round(time.monotonic() - started, 3)
+    return result
 
-    user_target = args.target.strip()
 
-    # check target first
-    canonical_target = is_target_up(user_target)
-    if not canonical_target:
-        print(f"{Fore.RED}[-] Aborting scans because target is not reachable: {user_target}{Style.RESET_ALL}")
-        sys.exit(1)
+def tool_executable(module):
+    if module == 'testssl':
+        return shutil.which('testssl') or shutil.which('testssl.sh')
+    return shutil.which(module)
 
-    base_output = Path(args.output_dir) / sanitize_filename(canonical_target)
-    base_output.mkdir(parents=True, exist_ok=True)
 
-    print_banner()
+def tls_endpoint(target):
+    parsed = urlsplit(target)
+    host = parsed.hostname
+    if ':' in host:
+        host = '[' + host + ']'
+    return host + ':' + str(parsed.port or 443)
 
-    # ensure required tools are present (fail early)
-    check_required_tools(["whatweb", "nikto", "dirsearch", "nuclei", "eyewitness", "waybackurls"])
 
-    print(f"{Fore.CYAN}[~] Target confirmed: {canonical_target}{Style.RESET_ALL}")
-    print(f"{Fore.BLUE}[*] Starting scans...{Style.RESET_ALL}")
+def build_command(module, target, folder, args):
+    """Tool outputs are relative to the target run, with separate console logs."""
+    artifact = folder / (module + '_results.txt')
+    if module == 'curl':
+        cmd = ['curl', '--disable', '--head', '--silent', '--show-error', '--url', target]
+        if args.insecure:
+            cmd.append('--insecure')
+    elif module == 'testssl':
+        cmd = [tool_executable('testssl') or 'testssl', '--quiet', '--color', '0', '--warnings', 'batch']
+    elif module == 'sslscan':
+        cmd = ['sslscan', '--no-colour', tls_endpoint(target)]
+    elif module == 'whatweb':
+        cmd = ['whatweb', '-v', '--color=never', '--max-threads=1',
+               '--wait=' + str(args.whatweb_wait), '--follow-redirect=never', target]
+    elif module == 'nikto':
+        cmd = ['nikto', '-C', 'all', '-host', target, '-Pause', str(args.nikto_pause), '-ask', 'no', '-nointeractive']
+    elif module == 'waybackurls':
+        artifact = folder / 'wayback_results' / 'urls.txt'
+        cmd = ['waybackurls', urlsplit(target).hostname]
+    elif module == 'dirsearch':
+        artifact = folder / 'dirsearch_results' / 'results.txt'
+        cmd = ['dirsearch', '-u', target, '-e', 'php,asp,aspx,jsp,html,js,json',
+               '--random-agent', '-t', str(args.dirsearch_threads),
+               '--max-rate', str(args.dirsearch_rate), '--output-formats', 'plain', '-o', str(artifact)]
+        if args.wordlist:
+            cmd += ['-w', args.wordlist]
+    else:
+        artifact = folder / 'nuclei_results.jsonl'
+        cmd = ['nuclei', '-u', target, '-jsonl', '-omit-raw', '-no-color',
+               '-disable-redirects', '-rate-limit', str(args.nuclei_rate), '-o', str(artifact)]
+        if args.nuclei_template:
+            cmd += ['-t', args.nuclei_template]
+    if module in AUTH_MODULES:
+        flag = {'nikto': '-Add-header', 'testssl': '--reqheader'}.get(module, '-H')
+        for name, value in args.headers:
+            cmd += [flag, name + ': ' + value]
+    if module == 'testssl':
+        cmd.append(tls_endpoint(target))  # testssl requires the endpoint last.
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    return cmd, artifact
 
-    # prepare tasks
-    tasks = [
-        ("whatweb", run_whatweb, (canonical_target, base_output), {}),
-        ("nikto", run_nikto, (canonical_target, base_output), {}),
-        ("waybackurls", run_waybackurls, (canonical_target, base_output), {}),
-        ("dirsearch", run_dirsearch, (canonical_target, base_output), {"wordlist": args.wordlist}),
-        ("eyewitness", run_eyewitness, (canonical_target, base_output), {}),
-        ("nuclei", run_nuclei, (canonical_target, base_output), {"template": args.nuclei_template}),
-    ]
 
-    # run in parallel and centralize completion messages
-    with ThreadPoolExecutor(max_workers=max(1, args.threads)) as executor:
-        future_to_name = {}
-        for name, func, fargs, fkwargs in tasks:
-            future = executor.submit(func, *fargs, **fkwargs)
-            future_to_name[future] = name
+def redact_artifact(path, redact):
+    """Redact supplied secrets from UTF-8 tool reports; do not follow symlinks."""
+    paths = path.rglob('*') if path.is_dir() else [path]
+    for item in paths:
+        if item.is_symlink() or not item.is_file():
+            continue
+        try:
+            text = item.read_text(encoding='utf-8')
+        except UnicodeError:
+            continue  # Screenshots/databases are raw evidence, not console logs.
+        cleaned = redact(text)
+        if cleaned != text:
+            item.write_text(cleaned, encoding='utf-8')
 
-        for future in as_completed(future_to_name):
-            name = future_to_name[future]
+
+def nuclei_findings(path, status, redact):
+    findings, bad_lines = [], 0
+    if not path.exists():
+        return findings, 'output_missing'
+    with path.open(encoding='utf-8', errors='replace') as source:
+        for line in source:
+            if not line.strip():
+                continue
             try:
-                result = future.result()
-                # result will typically be a path string
-                if result:
-                    print(f"{Fore.GREEN}[{name}] Completed. Results: {result}{Style.RESET_ALL}")
-                else:
-                    print(f"{Fore.GREEN}[{name}] Completed.{Style.RESET_ALL}")
-            except Exception as e:
-                # print the exception message once
-                print(f"{Fore.RED}[{name}] Failed: {e}{Style.RESET_ALL}")
+                item = json.loads(line)
+                info = item.get('info', {})
+                if not isinstance(info, dict) or not item.get('template-id'):
+                    raise ValueError()
+                findings.append({key: redact(value) for key, value in {
+                    'template_id': item['template-id'], 'name': info.get('name', ''),
+                    'severity': info.get('severity', 'unknown'),
+                    'matched_at': item.get('matched-at', item.get('host', ''))}.items()})
+            except (ValueError, AttributeError, TypeError):
+                bad_lines += 1
+    if bad_lines:
+        return findings, 'invalid_output'
+    return findings, 'complete' if status == 'completed' else 'partial'
 
-    print(f"{Fore.GREEN}[+] All scans completed. Results in {base_output}{Style.RESET_ALL}")
 
-if __name__ == "__main__":
-    main()
+def execute_module(module, target, folder, args, slots, stop, redact, progress_target=None):
+    result = {'module': module, 'status': 'cancelled', 'duration_seconds': 0,
+              'exit_code': None, 'findings': [], 'findings_status': 'not_parsed', 'artifacts': []}
+    if module in TLS_MODULES and urlsplit(target).scheme != 'https':
+        result.update(status='not_applicable', error='TLS checks require an HTTPS target; HTTP targets are not redirected to a different port')
+        return result
+    while not stop.is_set():
+        if slots.acquire(timeout=0.1):
+            break
+    else:
+        return result
+    try:
+        if stop.is_set():
+            return result
+        progress = getattr(args, 'progress', None)
+        if progress:
+            progress.update(progress_target or target, module, 'running')
+        cmd, artifact = build_command(module, target, folder, args)
+        stdout = artifact if module in ('curl', 'whatweb', 'nikto', 'waybackurls', 'testssl', 'sslscan') else folder / (module + '_stdout.log')
+        stderr = folder / (module + '_stderr.log')
+        result['started_at'] = timestamp()
+        result['authentication'] = 'not_applicable' if module in ('waybackurls', 'sslscan') else ('headers_supplied' if args.headers else 'none')
+        result.update(run_command(cmd, stdout, stderr, args.tool_timeout, stop, redact))
+        redact_artifact(artifact, redact)
+        if module == 'nuclei':
+            result['findings'], result['findings_status'] = nuclei_findings(artifact, result['status'], redact)
+            if result['status'] == 'completed' and result['findings_status'] != 'complete':
+                result.update(status='failed', error='Nuclei output missing or invalid; findings may be incomplete')
+        elif module == 'dirsearch' and result['status'] == 'completed' and not artifact.exists():
+            result.update(status='failed', error='Expected scanner output is missing')
+        result['artifacts'] = list(dict.fromkeys(str(p.relative_to(folder)) for p in (artifact, stdout, stderr) if p.exists()))
+        result['artifact_hashes'] = {p: file_digest(folder / p) for p in result['artifacts'] if (folder / p).is_file()}
+        return result
+    except Exception as exc:
+        # Exception messages may embed subprocess arguments; keep only the type.
+        result.update(status='failed', error=type(exc).__name__)
+        return result
+    finally:
+        slots.release()
+
+
+def write_json(path, value):
+    temporary = path.with_suffix(path.suffix + '.tmp')
+    temporary.write_text(json.dumps(value, indent=2, ensure_ascii=True) + '\n', encoding='utf-8')
+    temporary.replace(path)
+
+
+def report_html(summary):
+    esc = lambda value: html.escape(str(value), quote=True)
+    rows, findings = [], []
+    for module in summary['modules']:
+        count = str(len(module['findings'])) if module['findings_status'] == 'complete' else module['findings_status'].replace('_', ' ')
+        links = ' · '.join('<a href="' + quote(p, safe='/') + '">' + esc(p) + '</a>' for p in module['artifacts'])
+        rows.append('<tr><td>' + esc(module['module']) + '</td><td>' + esc(module['status']) +
+                    '</td><td>' + esc(module['duration_seconds']) + '</td><td>' + esc(count) +
+                    '</td><td>' + esc(module.get('error', '')) + '</td><td>' + links + '</td></tr>')
+        for finding in module['findings']:
+            findings.append('<tr>' + ''.join('<td>' + esc(finding[key]) + '</td>' for key in ('severity', 'template_id', 'name', 'matched_at')) + '</tr>')
+    return '''<!doctype html><html lang="en"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; base-uri 'none'; form-action 'none'">
+<title>WebRaptor scan report</title><style>
+body{font:16px system-ui,sans-serif;background:#101923;color:#e3edf5;margin:0;padding:36px;line-height:1.5}
+main{max-width:1300px;margin:auto}h1{color:#65e8b1}a{color:#7fcdff}table{border-collapse:collapse;width:100%;margin:24px 0}
+th,td{text-align:left;padding:12px;border-bottom:1px solid #334454;vertical-align:top;overflow-wrap:anywhere}
+.scroll{overflow-x:auto}.muted{color:#afc1d0}code{background:#233140;padding:3px}
+</style><main><h1>WebRaptor scan report</h1><p>''' + esc(summary['target']) + '</p><p>Status: <strong>' + esc(summary['status']) + '</strong> · Started: ' + esc(summary['started_at']) + '</p><p class="muted">Nuclei findings are scanner matches, not independently verified vulnerabilities. Other modules require raw-output review. A failed or partial scan never means no findings.</p><div class="scroll"><table><thead><tr><th>Module</th><th>Status</th><th>Seconds</th><th>Findings</th><th>Details</th><th>Output</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div><h2>Nuclei findings</h2><div class="scroll"><table><thead><tr><th>Severity</th><th>Template</th><th>Name</th><th>Location</th></tr></thead><tbody>' + ''.join(findings) + '</tbody></table></div><p><a href="summary.json">JSON summary</a> · <a href="scan.log">Scan log</a></p></main></html>'
+
+
+def scan_target(target, explicit, args, batch_id, slots, stop, redact):
+    started = time.monotonic()
+    folder = Path(args.output_dir).resolve() / target_key(target) / batch_id
+    folder.mkdir(parents=True, exist_ok=False, mode=0o700)
+    reusable = reusable_results(target, args)
+    summary = {'schema_version': 1, 'target': redact(target), 'started_at': timestamp(),
+               'status': 'running', 'modules': [], 'probe': {}, 'run_directory': str(folder)}
+    with (folder / 'scan.log').open('w', encoding='utf-8') as log:
+        def record(message):
+            log.write(timestamp() + ' ' + redact(message) + '\n')
+            log.flush()
+        record('Target workflow started')
+        write_json(folder / 'summary.json', summary)
+        try:
+            pending = [m for m in args.modules if m not in reusable]
+            if not pending or set(pending) <= TLS_MODULES:
+                canonical, summary['probe'] = None, {'status': 'not_required'}
+            else:
+                canonical, summary['probe'] = probe_target(target, explicit, args, stop)
+            if canonical:
+                summary['effective_target'] = redact(canonical)
+                record('Probe succeeded; scheme changed: ' + str(canonical != target))
+            else:
+                record('Probe ' + summary['probe']['status'])
+            # Archive and TLS modules do not require a successful HTTP probe.
+            with ThreadPoolExecutor(max_workers=min(args.threads, len(args.modules))) as pool:
+                jobs = {}
+                for module in args.modules:
+                    if module in reusable:
+                        old_folder, previous = reusable[module]
+                        result = copy.deepcopy(previous)
+                        for relative in result['artifacts']:
+                            destination = folder / relative
+                            destination.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(old_folder / relative, destination)
+                        result['reused_from'] = str(old_folder)
+                        summary['modules'].append(result)
+                        if getattr(args, 'progress', None):
+                            args.progress.update(target, module, 'reused')
+                        record(module + ': reused completed result')
+                        write_json(folder / 'summary.json', summary)
+                        continue
+                    if (not canonical and module not in TLS_MODULES | {'waybackurls'}) or stop.is_set():
+                        summary['modules'].append({'module': module, 'status': 'cancelled' if stop.is_set() else 'skipped',
+                            'error': 'Target probe did not complete successfully', 'duration_seconds': 0,
+                            'exit_code': None, 'findings': [], 'findings_status': 'not_parsed', 'artifacts': []})
+                        if getattr(args, 'progress', None):
+                            args.progress.update(target, module, summary['modules'][-1]['status'])
+                    else:
+                        jobs[pool.submit(execute_module, module, target if module in TLS_MODULES else (canonical or target), folder, args, slots, stop, redact, target)] = module
+                for future in as_completed(jobs):
+                    result = future.result()
+                    summary['modules'].append(result)
+                    if getattr(args, 'progress', None):
+                        args.progress.update(target, result['module'], result['status'])
+                    record(result['module'] + ': ' + result['status'])
+                    write_json(folder / 'summary.json', summary)
+            summary['modules'].sort(key=lambda m: args.modules.index(m['module']))
+            summary['status'] = ('cancelled' if stop.is_set() else
+                                 'completed' if all(m['status'] in ('completed', 'not_applicable') for m in summary['modules']) else 'incomplete')
+        except Exception as exc:
+            summary.update(status='failed', error=type(exc).__name__)
+            record('Workflow failed: ' + type(exc).__name__)
+        summary['duration_seconds'] = round(time.monotonic() - started, 3)
+        summary['finished_at'] = timestamp()
+        record('Workflow ' + summary['status'])
+    write_json(folder / 'summary.json', summary)
+    (folder / 'report.html').write_text(report_html(summary), encoding='utf-8')
+    print('[' + summary['status'] + '] Report: ' + str(folder / 'report.html'))
+    return summary
+
+
+def write_batch(folder, batch_id, results):
+    folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+    summary = {'schema_version': 1, 'run_id': batch_id, 'targets': results}
+    write_json(folder / 'summary.json', summary)
+    rows = []
+    for result in results:
+        path = os.path.relpath(Path(result['run_directory']) / 'report.html', folder)
+        rows.append('<li><a href="' + quote(path, safe='/') + '">' + html.escape(result['target']) +
+                    '</a> — ' + html.escape(result['status']) + '</li>')
+    (folder / 'report.html').write_text('<!doctype html><html lang="en"><meta charset="utf-8"><title>WebRaptor batch</title>'
+        '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; base-uri \'none\'">'
+        '<h1>WebRaptor batch</h1><ul>' + ''.join(rows) + '</ul><p><a href="summary.json">JSON summary</a></p></html>', encoding='utf-8')
+
+
+def main(argv=None):
+    args = parse_args(argv)
+    if os.name != 'posix':
+        print('WebRaptor currently requires Linux or macOS.', file=sys.stderr)
+        return 1
+    if args.check_tools:
+        return check_tools(args)
+    needed = {m for target, _ in args.targets for m in args.modules if m not in reusable_results(target, args)}
+    missing = [m for m in args.modules if m in needed and not tool_executable(m)]
+    if missing:
+        print('Missing selected tools: ' + ', '.join(missing), file=sys.stderr)
+        return 1
+    STOP.clear()
+    def handle_signal(signum, frame):
+        STOP.set()
+    previous = {sig: signal.signal(sig, handle_signal) for sig in (signal.SIGINT, signal.SIGTERM)}
+    old_umask = os.umask(0o077)
+    try:
+        print_banner()
+        batch_id = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ') + '-' + uuid.uuid4().hex[:8]
+        batch_folder = Path(args.output_dir).resolve() / '_runs' / batch_id
+        slots = threading.BoundedSemaphore(args.threads)
+        redact = Redactor(args.headers)
+        results = []
+        batch_folder.mkdir(parents=True, exist_ok=False, mode=0o700)
+        write_json(batch_folder / 'run.json', {
+            'kind': 'webraptor-run', 'schema_version': 1, 'run_id': batch_id,
+            'targets': [[redact(t), explicit] for t, explicit in args.targets],
+            'settings': {key: getattr(args, key) for key in SAVED_SETTINGS},
+            'header_names': [name.lower() for name, _ in args.headers],
+        })
+        print('Resume manifest: ' + str(batch_folder / 'run.json'), flush=True)
+        with Progress(args.targets, args.modules, not args.no_progress) as progress, ThreadPoolExecutor(max_workers=min(args.target_concurrency, len(args.targets))) as pool:
+            args.progress = progress
+            futures = [pool.submit(scan_target, target, explicit, args, batch_id, slots, STOP, redact)
+                       for target, explicit in args.targets]
+            for future in as_completed(futures):
+                results.append(future.result())
+                write_batch(batch_folder, batch_id, results)
+        print('Batch report: ' + str(batch_folder / 'report.html'))
+        return 130 if STOP.is_set() else (0 if all(r['status'] == 'completed' for r in results) else 1)
+    except OSError as exc:
+        print('Output/process error: ' + type(exc).__name__, file=sys.stderr)
+        return 1
+    finally:
+        os.umask(old_umask)
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
+if __name__ == '__main__':
+    sys.exit(main())
