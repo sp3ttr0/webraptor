@@ -132,7 +132,7 @@ class UnitTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             commands = {m: w.build_command(m, 'https://example.com/path', Path(temp), args)[0] for m in w.MODULES}
         self.assertEqual(commands['curl'][:6], ['curl', '--disable', '--head', '--silent', '--show-error', '--url'])
-        self.assertNotIn('--location', commands['curl'])
+        self.assertIn('--location', commands['curl'])
         self.assertNotIn('--insecure', commands['curl'])
         self.assertEqual(commands['waybackurls'], ['waybackurls', 'example.com'])
         self.assertIn('-rate-limit', commands['nuclei'])
@@ -198,7 +198,11 @@ class IntegrationTests(unittest.TestCase):
                 self.end_headers()
             def do_HEAD(self):
                 requests.append(dict(self.headers, method='HEAD'))
-                self.send_response(403)
+                if self.path in ('/redirect', '/loop'):
+                    self.send_response(302)
+                    self.send_header('Location', '/loop' if self.path == '/loop' else '/final')
+                else:
+                    self.send_response(403)
                 self.send_header('X-WebRaptor-Test', 'head-response')
                 self.end_headers()
             def log_message(self, *args):
@@ -236,6 +240,28 @@ class IntegrationTests(unittest.TestCase):
         self.assertIn('curl_results.txt', result['artifacts'])
         args.insecure = True
         self.assertIn('--insecure', w.build_command('curl', target, folder, args)[0])
+
+    @unittest.skipUnless(REAL_CURL, 'curl executable is required')
+    def test_curl_redirect_chain_and_loop_limit(self):
+        target, requests = self.start_http_fixture()
+        args = w.parse_args([target, '--modules', 'curl'])
+        for route, status in (('/redirect', 'completed'), ('/loop', 'failed')):
+            with self.subTest(route=route):
+                requests.clear()
+                cmd, artifact = w.build_command('curl', target + route, self.root, args)
+                cmd[0] = REAL_CURL
+                result = w.run_command(cmd, artifact, self.root / 'curl-error.log', 10, threading.Event(), w.Redactor())
+                self.assertEqual(result['status'], status)
+                self.assertTrue(all(r['method'] == 'HEAD' for r in requests))
+                output = artifact.read_text()
+                self.assertIn('302', output)
+                if route == '/redirect':
+                    self.assertEqual(len(requests), 2)
+                    self.assertIn('403', output)
+                    self.assertIn('Location: /final', output)
+                else:
+                    self.assertEqual(result['exit_code'], 47)
+                    self.assertLessEqual(len(requests), 11)
 
     def test_real_http_probe_and_cli(self):
         target, requests = self.start_http_fixture()

@@ -498,7 +498,7 @@ def tool_executable(module):
 
 # Help probes have no targets and never execute scanner tests.
 TOOL_CHECKS = {
-    'curl': (['--disable', '--version'], ['--disable', '--help', 'all'], ['--head', '--silent', '--show-error', '--url', '--disable']),
+    'curl': (['--disable', '--version'], ['--disable', '--help', 'all'], ['--head', '--silent', '--show-error', '--url', '--disable', '--location', '--max-redirs', '--proto-redir']),
     'whatweb': (['--version'], ['--help'], ['--color', '--max-threads', '--wait', '--follow-redirect', '-v']),
     'nikto': (['-Version'], ['-Help'], ['-Cgidirs', '-host', '-Pause', '-ask', '-nointeractive']),
     'waybackurls': (None, ['-h'], ['-dates', '-no-subs']),
@@ -571,7 +571,7 @@ def build_command(module, target, folder, args):
     """Tool outputs are relative to the target run, with separate console logs."""
     artifact = folder / (module + '_results.txt')
     if module == 'curl':
-        cmd = ['curl', '--disable', '--head', '--silent', '--show-error', '--url', target]
+        cmd = ['curl', '--disable', '--head', '--silent', '--show-error', '--url', target, '--location', '--max-redirs', '10', '--proto-redir', '=http,https']
         if args.insecure:
             cmd.append('--insecure')
     elif module == 'testssl':

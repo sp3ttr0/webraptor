@@ -21,7 +21,7 @@ if args and args[-1] in ('--version', '-version', '-Version'):
     sys.exit(0)
 if args and args[-1] in ('--help', '--help-all', '-h', '-Help', 'all'):
     print('Usage: scanner [options]')
-    print('--head --silent --show-error --url --disable --insecure --color --max-threads --wait --follow-redirect -v -H -Cgidirs -host -Pause -ask -nointeractive -Add-header -dates -no-subs -u -e --random-agent -t --max-rate --output-formats -o -w -jsonl -omit-raw -no-color -disable-redirects -rate-limit --quiet --warnings --reqheader --no-colour' if os.environ.get('WEBRAPTOR_TEST_HELP') != 'missing' else '--unrelated')
+    print('--location --max-redirs --proto-redir --head --silent --show-error --url --disable --insecure --color --max-threads --wait --follow-redirect -v -H -Cgidirs -host -Pause -ask -nointeractive -Add-header -dates -no-subs -u -e --random-agent -t --max-rate --output-formats -o -w -jsonl -omit-raw -no-color -disable-redirects -rate-limit --quiet --warnings --reqheader --no-colour' if os.environ.get('WEBRAPTOR_TEST_HELP') != 'missing' else '--unrelated')
     sys.exit(0)
 events = os.environ.get('WEBRAPTOR_TEST_EVENTS')
 def event(kind):
