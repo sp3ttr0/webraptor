@@ -1,31 +1,21 @@
 # webraptor
 
-WebRaptor runs web reconnaissance and security scanners against one target or a deduplicated target list. It manages execution, keeps partial results when a tool fails, and generates JSON and HTML reports. The original dinosaur banner is unchanged.
+WebRaptor combines eight web reconnaissance and security modules into a single-target or multi-target workflow. It provides module selection, bounded concurrency, timeouts, credential redaction, resumable runs, live progress, and HTML/JSON reports. The original dinosaur banner is preserved.
 
-## Features
+## Setup and modules
 
-- Curl HEAD response headers, WhatWeb fingerprinting, Nikto checks, Wayback URL discovery, Dirsearch content discovery, Nuclei scanning, and TLS checks with testssl and sslscan.
-- Choose individual modules; only selected executables are required.
-- Per-module wall-clock timeout and cleanup of scanner process groups on timeout, Ctrl+C, or SIGTERM.
-- Bounded target and scanner concurrency with separate scanner request-rate controls.
-- Unique directories for every run, per-target reports, and a batch index.
-- Nuclei JSONL findings with severity, template, and location. Other tools retain their native output for manual review.
-- HTTP headers and cookies for authenticated scans through supported modules, with redaction of supplied credentials from saved console logs and summaries.
+Requires **Python 3.9+ on Linux or macOS**. Install selected tools and their dependencies using the upstream instructions, and put their executables in `PATH`.
 
-## Requirements and setup
-
-Python 3.9+ on Linux or macOS. Install the external tools you want to run using their upstream instructions, and make their executables available in `PATH`:
-
-| Module / executable | Upstream |
+| Module | Purpose / upstream |
 | --- | --- |
-| `curl` | [curl](https://curl.se/) |
-| `whatweb` | [WhatWeb](https://github.com/urbanadventurer/WhatWeb) |
-| `nikto` | [Nikto](https://github.com/sullo/nikto) |
-| `waybackurls` | [Waybackurls](https://github.com/tomnomnom/waybackurls) |
-| `dirsearch` | [Dirsearch](https://github.com/maurosoria/dirsearch) |
-| `nuclei` | [Nuclei](https://github.com/projectdiscovery/nuclei) |
-| `testssl` or `testssl.sh` | [testssl.sh](https://github.com/testssl/testssl.sh) |
-| `sslscan` | [sslscan](https://github.com/rbsec/sslscan) |
+| `curl` | [HEAD response headers](https://curl.se/) |
+| `whatweb` | [Technology fingerprinting](https://github.com/urbanadventurer/WhatWeb) |
+| `nikto` | [Web server checks](https://github.com/sullo/nikto) |
+| `waybackurls` | [Historical URL discovery](https://github.com/tomnomnom/waybackurls) |
+| `dirsearch` | [Directory and file discovery](https://github.com/maurosoria/dirsearch) |
+| `nuclei` | [Template-based vulnerability checks](https://github.com/projectdiscovery/nuclei) |
+| `testssl` | [TLS checks](https://github.com/testssl/testssl.sh); accepts `testssl` or `testssl.sh`, preferring `testssl` |
+| `sslscan` | [TLS protocols and ciphers](https://github.com/rbsec/sslscan) |
 
 From this directory:
 
@@ -33,139 +23,116 @@ From this directory:
 python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install -r requirements.txt
-python3 webraptor.py --help
+python3 webraptor.py --check-tools
 ```
 
-The adapters target current upstream CLI options. In particular, Dirsearch must support `--output-formats`, and authenticated Nikto scans require `-Add-header`. Older installations may need updating. Unsupported flags will produce a failed module with diagnostics; the tests do not certify every installed scanner version.
+`--check-tools` accepts `--modules`/`--exclude` but no target. It checks executable versions and advertised CLI flags, with a 10-second limit per command, without scanning or creating output directories. Waybackurls reports an executable SHA256 instead of a version. This does not verify runtime dependencies, templates, connectivity, or scan accuracy. Normal scans only check executable presence.
+
+Adapters require compatible CLI versions: notably Dirsearch `--output-formats` and Nikto `-Add-header` for authentication. Unsupported options fail the module with diagnostics.
 
 ## Usage
 
-Run every module against one target:
-
 ```bash
+# All eight modules
 python3 webraptor.py https://example.com
-```
 
-Exclude one or two modules from the default set:
-
-```bash
+# Exclude modules, or select only those needed
 python3 webraptor.py https://example.com --exclude nikto,dirsearch
-```
+python3 webraptor.py https://example.com --modules curl,nuclei --tool-timeout 600
 
-`--exclude` accepts comma-separated names and can be repeated. It is applied after `--modules` when both are provided. Excluded tools are not required or run. Unknown names and selections that leave no modules are rejected.
-
-Capture response headers only:
-
-```bash
-python3 webraptor.py https://example.com --modules curl
-```
-
-The curl module runs `curl --head` with quiet progress output and visible errors, saves headers to `curl_results.txt`, and uses the shared module timeout, authentication, and redaction controls. It disables the default curl configuration file and does not follow redirects or fetch a response body. HTTP error statuses such as 403 or 405 are retained as useful header results; connection errors fail the module. The workflow still performs its separate GET reachability probe before running HEAD.
-
-Run TLS checks against the target host and port:
-
-```bash
+# TLS checks on a specific port
 python3 webraptor.py https://example.com:8443 --modules testssl,sslscan
-```
 
-Both TLS modules are enabled by default. `testssl` accepts either `testssl` or `testssl.sh` in `PATH`, preferring `testssl`. Results are saved to `testssl_results.txt` and `sslscan_results.txt`, with separate stderr logs and links in the reports. They share the global concurrency and module timeout controls; their raw findings require manual review.
-
-TLS checks use the original HTTPS hostname and port (443 by default), removing paths and queries. They run even when the HTTP probe fails, including certificate-verification failures. TLS-only runs skip the HTTP probe entirely. Explicit HTTP targets are marked `not_applicable` for TLS modules and do not cause a different port to be scanned. This status is not a failure. Supply an HTTPS URL to request TLS checks on a particular port. Bare domains retain their HTTPS TLS endpoint even if the web probe falls back to HTTP. STARTTLS is not enabled.
-
-Run selected modules with a 10-minute timeout per module:
-
-```bash
-python3 webraptor.py https://example.com \
-  --modules whatweb,nuclei --tool-timeout 600
-```
-
-Scan a target file with two concurrent target workflows and at most three active scanner processes across the entire batch:
-
-```bash
+# Multiple targets; at most two target workflows and three scanner processes
 python3 webraptor.py --targets-file targets.txt \
-  --target-concurrency 2 --threads 3 \
-  --modules whatweb,dirsearch,nuclei \
-  --nuclei-rate 10 --dirsearch-rate 5
+  --target-concurrency 2 --threads 3 --nuclei-rate 10 --dirsearch-rate 5
 ```
 
-Example `targets.txt`:
+Use either a target or `-l`/`--targets-file`. Files contain one target per line; blank lines and `#` comment lines are ignored. Host casing, default ports, and root paths are normalized for deduplication; distinct paths and queries remain separate. An explicit HTTPS URL takes precedence over a duplicate bare domain.
 
-```text
-# Authorized targets, one per line
-https://example.com
-https://app.example.com:8443/
-```
-
-Blank lines and lines starting with `#` are ignored. Host casing, default ports, and an empty root path are normalized before deduplication. Paths and query strings remain distinct. When a bare domain and its explicit HTTPS URL both occur, the explicit scheme policy wins. Provide either the positional target or `--targets-file`, not both.
+`--exclude` accepts comma-separated names, is repeatable, and applies after `--modules`. Excluded tools are not required or run. Unknown names and empty final selections are rejected.
 
 ## Options
 
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--modules` | All eight | Comma-separated module names |
-| `--exclude` | None | Comma-separated modules to omit; repeatable |
-| `--output-dir` | `results` | Base results directory |
+| `--exclude` | None | Comma-separated exclusions; repeatable |
+| `--check-tools` | Off | Check versions and CLI compatibility without a target |
+| `--resume` | None | Previous batch directory or `run.json` |
+| `--no-progress` | Off | Silence progress on stderr |
+| `--output-dir` | `results` | Base output directory |
 | `--threads` | `6` | Global maximum active scanner processes |
-| `--target-concurrency` | `1` | Maximum concurrent target workflows |
-| `--tool-timeout` | `1800` | Wall-clock seconds per running module; queue time excluded |
+| `--target-concurrency` | `1` | Concurrent target workflows |
+| `--tool-timeout` | `1800` | Wall-clock seconds per module, excluding queue time |
 | `--probe-timeout` | `8` | HTTP probe timeout in seconds |
-| `--allow-scheme-fallback` | Off | Permit an explicit HTTP(S) URL to try the other scheme |
-| `--insecure` | Off | Disable certificate verification for the reachability probe and curl |
+| `--allow-scheme-fallback` | Off | Allow explicit URLs to try the other HTTP(S) scheme |
+| `--insecure` | Off | Disable certificate verification for the probe and curl |
 | `--nuclei-template` | Tool default | Custom template file or directory |
 | `--wordlist` | Tool default | Dirsearch wordlist file |
-| `--nuclei-rate` | `20` | Nuclei requests per second per process |
-| `--dirsearch-rate` | `10` | Dirsearch requests per second per process |
-| `--dirsearch-threads` | `10` | Workers within each Dirsearch process |
-| `--whatweb-wait` | `1` | Whole seconds between WhatWeb connections; one worker |
+| `--nuclei-rate` | `20` | Requests/second per Nuclei process |
+| `--dirsearch-rate` | `10` | Requests/second per Dirsearch process |
+| `--dirsearch-threads` | `10` | Workers per Dirsearch process |
+| `--whatweb-wait` | `1` | Whole seconds between connections; one WhatWeb worker |
 | `--nikto-pause` | `1` | Seconds between Nikto requests |
-| `-H`, `--header` | None | Repeatable `Name: value` header |
-| `--headers-file` | None | File of headers, one per line |
+| `-H`, `--header` | None | Repeatable ASCII `Name: value` header |
+| `--headers-file` | None | One header per line |
 | `--cookie` | None | Cookie header value |
-| `--cookie-file` | None | File containing the Cookie header value |
+| `--cookie-file` | None | File containing a Cookie header value |
 
-Rate limits apply per scanner process. They are **not a global requests-per-second ceiling**: rates from concurrent scanners and targets add together. Waybackurls uses its own archive-service request behavior. It has no wrapper-enforced request-rate limit. testssl and sslscan also manage their own TLS connection rates; HTTP scanner rate options do not limit them.
+Use `--help` for CLI help. Request-rate controls are **per process, not a global traffic limit**; concurrent rates add together. Waybackurls, testssl, and sslscan manage their own request/connection rates.
 
-An explicit URL keeps its scheme unless `--allow-scheme-fallback` is set. A bare domain tries HTTPS and then HTTP. Any HTTP response, including 401, 403, 404, or 500, establishes reachability; it does not prove authentication succeeded. The probe reads only response headers and does not follow redirects. On unreachable targets, HTTP modules are skipped while selected Wayback discovery and TLS checks can still run.
+## Scan behavior
 
-`--insecure` allows the probe and curl to accept self-signed or otherwise invalid certificates. The other external scanners retain their own certificate handling; this flag is not a universal TLS policy override. WhatWeb and Nuclei are explicitly instructed not to follow redirects; Dirsearch and Nikto are invoked without enabling redirect following. Tool configuration and custom templates can affect behavior.
+- **Reachability:** bare domains try HTTPS then HTTP; explicit URLs retain their scheme unless fallback is enabled. The GET probe reads headers only and follows no redirects. Any HTTP response, including 4xx/5xx, counts as reachable—not as successful authentication. Failed probes skip HTTP modules; archive and TLS modules can still run.
+- **curl:** runs `curl --head`, disables the default curl configuration, and saves headers without following redirects or fetching a body. HTTP errors such as 403/405 remain useful results; connection errors fail the module. The separate GET probe still runs first.
+- **TLS:** checks use the original HTTPS hostname and port (default 443), without paths or queries, even if the probe fails or falls back to HTTP. TLS-only runs skip the probe. Explicit HTTP targets produce `not_applicable`, not a failure or an automatic scan of another port. STARTTLS is not enabled.
+- **Certificates and redirects:** `--insecure` affects only the probe and curl. Other tools retain their own TLS handling. WhatWeb and Nuclei receive explicit no-redirect options; Nikto and Dirsearch are invoked without enabling redirects. Tool configuration and custom templates may affect behavior.
+- **Progress and interruption:** stderr shows module states, total elapsed time, and active-module elapsed time on changes and every two seconds. Labels omit URL paths/queries. `--no-progress` suppresses these updates; report paths remain on stdout. Timeouts, Ctrl+C, and SIGTERM terminate scanner process groups and retain partial output. SIGKILL or machine failure may prevent final reports.
 
-## Authenticated scans
+## Authentication and secrets
 
-Use a header file to avoid putting secrets in your shell history:
-
-```text
-Authorization: Bearer YOUR_TOKEN
-X-Api-Key: YOUR_API_KEY
-```
-
-A cookie file contains just the value, for example `session=YOUR_SESSION; csrf=YOUR_TOKEN`.
+Prefer files to keep credentials out of shell history. A header file contains entries such as `Authorization: Bearer YOUR_TOKEN`; a cookie file contains only values such as `session=YOUR_SESSION; csrf=YOUR_TOKEN`.
 
 ```bash
 python3 webraptor.py https://app.example.com \
-  --modules whatweb,nikto,dirsearch,nuclei \
   --headers-file headers.txt --cookie-file cookies.txt
 ```
 
-Headers are forwarded to the probe, curl, WhatWeb, Nikto, Dirsearch, and Nuclei. Cookies are sent as a Cookie header. Duplicate header names and multiline values are rejected. Headers use ASCII values. No automatic login, token refresh, or authenticated-session validation is performed.
+Headers/cookies reach the probe, curl, WhatWeb, Nikto, Dirsearch, and Nuclei. testssl uses `--reqheader` for HTTP checks, not TLS-handshake authentication. sslscan and Waybackurls receive no HTTP credentials. Duplicate header names and multiline values are rejected; `--cookie` and `--cookie-file` are mutually exclusive. Automatic login, token refresh, and session validation are not provided. Authenticated target lists must use one host and port; other hosts/ports require separate runs.
 
-testssl receives headers and cookies through `--reqheader` for its HTTP checks; this does not authenticate the TLS handshake. sslscan and Waybackurls never receive HTTP headers or cookies.
+Supplied header values, bearer tokens, cookie values, and common encoded forms are redacted from saved console logs and textual reports. Command lines are not logged, but scanner process arguments may expose credentials to local inspection. Text artifacts are sanitized after execution, so raw data can exist during a run. Binary artifacts, files outside the run directory, and newly discovered secrets are not comprehensively sanitized. Files use owner-only permissions; review evidence before sharing.
 
-Authenticated target files may include multiple paths on one host and port. Different hosts or ports require separate authenticated runs so the same credentials are not silently applied across unrelated targets.
+## Resume
 
-Supplied header values, bearer tokens, cookie values, and common encoded forms are redacted from saved console logs and textual reports. The wrapper never logs scanner command lines. Scanner commands still carry headers in their process arguments, which may be visible to local process inspection. Binary artifacts, screenshots, scanner-managed files outside the run directory, and secrets newly disclosed by the target are not comprehensively sanitized. Textual scanner artifacts are sanitized after the process stops; raw evidence can exist during execution. Run files are created with owner-only permissions. Review evidence before sharing it.
+Each new run prints its manifest path before scanning:
 
-## Output and reporting
+```bash
+python3 webraptor.py --resume results/_runs/<run-id>/run.json
+# The batch directory is also accepted; resupply credentials if needed:
+python3 webraptor.py --resume results/_runs/<run-id> \
+  --headers-file headers.txt --cookie-file cookies.txt --tool-timeout 3600
+```
+
+Resume writes a **new run**, copying completed outputs only when their SHA256 checks match. Failed, unfinished, skipped, missing, or modified results run again, including targets that never started. Old results remain intact; reused results retain timestamps and record `reused_from`. Reuse does not revalidate the target, and unfinished modules restart rather than continue scanner-internal checkpoints.
+
+Targets and settings are restored. You may change timeouts, `--threads`, `--target-concurrency`, or `--output-dir`, and select a subset with `--modules`/`--exclude`. Other scan settings cannot change. Keep referenced templates/wordlists available and unchanged; reused modules do not need installed executables.
+
+Manifests store URLs, settings, paths, and header names—not authentication values. Resupply the original header names/cookies; values may be refreshed. Redacted target URLs cannot be resumed automatically. Resume requires this version's `run.json` and the original `_runs/<run-id>` layout with sibling target directories; older runs without manifests are unsupported.
+
+## Output and results
 
 ```text
 <output-dir>/
 ├── _runs/<timestamp>-<run-id>/
+│   ├── run.json                  # Resume manifest
 │   ├── summary.json              # Batch results
-│   └── report.html               # Links to target reports
+│   └── report.html               # Target report links
 └── <host>-<target-hash>/<timestamp>-<run-id>/
-    ├── summary.json              # Probe, module statuses, durations, findings
-    ├── report.html               # Human-readable target report
+    ├── summary.json              # Probe, statuses, durations, findings
+    ├── report.html
     ├── scan.log
-    ├── curl_results.txt          # HEAD response headers
+    ├── curl_results.txt
     ├── whatweb_results.txt
     ├── nikto_results.txt
     ├── wayback_results/urls.txt
@@ -173,37 +140,29 @@ Supplied header values, bearer tokens, cookie values, and common encoded forms a
     ├── nuclei_results.jsonl
     ├── testssl_results.txt
     ├── sslscan_results.txt
-    ├── <module>_stdout.log        # Tools that write separate native artifacts
+    ├── <module>_stdout.log        # Modules with separate native artifacts
     └── <module>_stderr.log
 ```
 
-Only selected modules produce output. The target hash distinguishes schemes, ports, paths, and queries without putting full URLs into filenames. Run identifiers prevent overwrites. Partial results survive ordinary timeouts and handled interruptions; SIGKILL and machine failure cannot guarantee a finalized report.
+Only selected modules produce output. Target hashes distinguish schemes, ports, paths, and queries without exposing full URLs in filenames; unique run IDs prevent overwrites.
 
-Reports distinguish `completed`, `failed`, `timed_out`, `cancelled`, `skipped`, and `not_applicable`. Nuclei findings have separate completeness information: a missing or malformed JSONL file is not interpreted as zero findings. Other module outputs are marked `not parsed`, not zero. Nuclei matches require validation before treating them as confirmed vulnerabilities.
-
-A scanner returning exit code zero means that its process completed; it cannot guarantee complete application coverage. HTTP 200 also does not guarantee that supplied authentication was accepted. Consult raw outputs and stderr logs.
+Module statuses are `completed`, `failed`, `timed_out`, `cancelled`, `skipped`, or `not_applicable`. Nuclei findings include severity, template, location, and completeness: missing/malformed JSONL is never treated as zero findings. Other outputs require manual review and are marked `not parsed`. Scanner matches need validation; successful execution does not guarantee coverage, security, or accepted authentication.
 
 | Exit code | Meaning |
 | --- | --- |
-| `0` | All applicable selected modules completed successfully |
-| `1` | Missing tool, output error, or incomplete/failed target workflow |
-| `2` | Invalid command-line arguments or input |
+| `0` | All applicable modules completed, or all tool checks passed |
+| `1` | Missing/incompatible/unverified tool, output error, or incomplete scan |
+| `2` | Invalid arguments or input |
 | `130` | Ctrl+C or SIGTERM interruption |
 
-## Development and validation
+## Tests
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-Tests use local dummy scanner executables, a loopback HTTP server, and HTTP mocks. They cover real subprocess exit codes, stderr capture, timeouts, process-group cleanup, signal handling, batch concurrency, redaction, report generation, URL normalization, and banner preservation. No external targets are scanned. Installed third-party scanner compatibility still needs validation in your authorized testing environment.
+Tests use local dummy scanners, loopback HTTP, and mocks—not external targets. They cover execution, cleanup, concurrency, redaction, reports, normalization, banner preservation, tool checks, progress, and resume. Validate installed scanner compatibility in your authorized environment.
 
-Adapter references: [WhatWeb CLI](https://github.com/urbanadventurer/WhatWeb), [Nikto CLI](https://github.com/sullo/nikto), [Dirsearch CLI](https://github.com/maurosoria/dirsearch/blob/master/lib/parse/cmdline.py), [Nuclei CLI](https://github.com/projectdiscovery/nuclei).
+## Responsible use and license
 
-## Disclaimer
-
-For educational and authorized security testing only. Use only on systems you own or have explicit permission to test. The developers are not responsible for misuse or damage.
-
-## License
-
-MIT License. See [LICENSE](LICENSE).
+For educational and authorized testing only. Scan only systems you own or have explicit permission to test. Developers are not responsible for misuse or damage. Distributed under the [MIT License](LICENSE).

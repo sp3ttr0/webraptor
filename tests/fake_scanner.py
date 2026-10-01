@@ -16,11 +16,18 @@ if '--fake-child' in args:
         time.sleep(.1)
 
 mode = os.environ.get('WEBRAPTOR_TEST_MODE', 'success')
+if args and args[-1] in ('--version', '-version', '-Version'):
+    print(name + ' 1.2.3')
+    sys.exit(0)
+if args and args[-1] in ('--help', '--help-all', '-h', '-Help', 'all'):
+    print('Usage: scanner [options]')
+    print('--head --silent --show-error --url --disable --insecure --color --max-threads --wait --follow-redirect -v -H -Cgidirs -host -Pause -ask -nointeractive -Add-header -dates -no-subs -u -e --random-agent -t --max-rate --output-formats -o -w -jsonl -omit-raw -no-color -disable-redirects -rate-limit --quiet --warnings --reqheader --no-colour' if os.environ.get('WEBRAPTOR_TEST_HELP') != 'missing' else '--unrelated')
+    sys.exit(0)
 events = os.environ.get('WEBRAPTOR_TEST_EVENTS')
 def event(kind):
     if events:
         descriptor = os.open(events, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-        os.write(descriptor, (json.dumps({'event': kind, 'pid': os.getpid(), 'time': time.monotonic()}) + '\n').encode())
+        os.write(descriptor, (json.dumps({'event': kind, 'module': name, 'pid': os.getpid(), 'time': time.monotonic()}) + '\n').encode())
         os.close(descriptor)
 
 event('start')
@@ -31,7 +38,7 @@ if mode in ('hang', 'child'):
         subprocess.Popen([sys.executable, __file__, '--fake-child', os.environ['WEBRAPTOR_TEST_CHILD_PID']])
     while True:
         time.sleep(.1)
-if mode == 'fail':
+if mode == 'fail' or name == os.environ.get('WEBRAPTOR_TEST_FAIL_MODULE'):
     event('end')
     sys.exit(7)
 if mode == 'slow':

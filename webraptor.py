@@ -169,7 +169,7 @@ def read_headers(args):
 
 
 def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description='WebRaptor — web application scanning workflow')
+    parser = argparse.ArgumentParser(description='WebRaptor — web application scanning workflow', allow_abbrev=False)
     parser.add_argument('target', nargs='?', help='Domain or HTTP(S) URL')
     parser.add_argument('-l', '--targets-file', help='One target per line; # comments allowed')
     parser.add_argument('--check-tools', action='store_true', help='Check versions and required CLI flags without scanning')
@@ -205,7 +205,7 @@ def parse_args(argv=None):
             parser.error('--resume cannot be combined with targets or --check-tools')
         try:
             args.resume_data = load_resume(args.resume)
-        except (OSError, ValueError, TypeError, KeyError):
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
             parser.error('Invalid or unsupported resume manifest; use a batch run.json from this version')
         for key, value in args.resume_data['settings'].items():
             option = '--' + key.replace('_', '-')
@@ -334,6 +334,9 @@ def reusable_results(target, args):
             if result['status'] == 'completed' and not artifacts:
                 continue
             for relative in artifacts:
+                if not isinstance(relative, str) or Path(relative).is_absolute() or '..' in Path(relative).parts:
+                    valid = False
+                    break
                 path = (folder / relative).resolve()
                 if (not path.is_relative_to(folder.resolve()) or not path.is_file()
                         or result.get('artifact_hashes', {}).get(relative) != file_digest(path)):
@@ -342,7 +345,7 @@ def reusable_results(target, args):
             if valid:
                 reusable[module] = (folder, result)
         return reusable
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return {}
 
 
@@ -491,6 +494,69 @@ def tool_executable(module):
     if module == 'testssl':
         return shutil.which('testssl') or shutil.which('testssl.sh')
     return shutil.which(module)
+
+
+# Help probes have no targets and never execute scanner tests.
+TOOL_CHECKS = {
+    'curl': (['--disable', '--version'], ['--disable', '--help', 'all'], ['--head', '--silent', '--show-error', '--url', '--disable']),
+    'whatweb': (['--version'], ['--help'], ['--color', '--max-threads', '--wait', '--follow-redirect', '-v']),
+    'nikto': (['-Version'], ['-Help'], ['-Cgidirs', '-host', '-Pause', '-ask', '-nointeractive']),
+    'waybackurls': (None, ['-h'], ['-dates', '-no-subs']),
+    'dirsearch': (['--version'], ['--help-all'], ['-u', '-e', '--random-agent', '-t', '--max-rate', '--output-formats', '-o']),
+    'nuclei': (['-version'], ['-h'], ['-u', '-jsonl', '-omit-raw', '-no-color', '-disable-redirects', '-rate-limit', '-o']),
+    'testssl': (['--version'], ['--help'], ['--quiet', '--color', '--warnings']),
+    'sslscan': (['--version'], ['--help'], ['--no-colour']),
+}
+
+
+def check_tools(args):
+    """Inspect local version/help output, not target connectivity."""
+    failed = False
+    for module in args.modules:
+        executable = tool_executable(module)
+        if not executable:
+            print(f'{module}: MISSING')
+            failed = True
+            continue
+        version_args, help_args, base_flags = TOOL_CHECKS[module]
+        flags = list(base_flags)
+        if module in AUTH_MODULES:
+            flags.append({'nikto': '-Add-header', 'testssl': '--reqheader'}.get(module, '-H'))
+        if module == 'curl':
+            flags.append('--insecure')
+        if module == 'dirsearch':
+            flags.append('-w')
+        if module == 'nuclei':
+            flags.append('-t')
+        with tempfile.TemporaryDirectory(prefix='webraptor-check-') as temp:
+            folder = Path(temp)
+            def probe(arguments):
+                result = run_command([executable] + arguments, folder / 'out', folder / 'err',
+                                     10, threading.Event(), Redactor())
+                output = ''.join(p.read_text() for p in (folder / 'out', folder / 'err') if p.exists())
+                return result, re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', output)
+            help_result, help_text = probe(help_args)
+            # Released dirsearch versions may expose their full CLI through --help.
+            if module == 'dirsearch' and help_result['status'] == 'failed':
+                help_result, help_text = probe(['--help'])
+            missing = [flag for flag in flags if not re.search(r'(?<![\w-])' + re.escape(flag) + r'(?![\w-])', help_text)]
+            version = 'not exposed by upstream; executable SHA256 ' + file_digest(Path(executable))[:16]
+            version_ok = True
+            if version_args:
+                version_result, version_text = probe(version_args)
+                lines = [line.strip() for line in version_text.splitlines() if line.strip()]
+                version = next((line for line in lines if re.search(r'\d+\.\d+', line)), lines[0] if lines else 'unavailable')[:180]
+                version_ok = version_result['status'] == 'completed' and bool(lines)
+            # Several CLIs return 1 after printing valid help; that alone is not a failure.
+            help_ok = help_result['exit_code'] in (0, 1, 2) and bool(help_text) and not missing
+            ok = help_ok and version_ok
+            failed |= not ok
+            print(f'{module}: {"OK" if ok else "INCOMPATIBLE/UNVERIFIED"} | {version} | {executable}')
+            if missing:
+                print('  Missing required flags: ' + ', '.join(missing))
+            if not version_ok or help_result['status'] in ('timed_out', 'cancelled'):
+                print('  Version/help probe failed or timed out (10-second limit per command).')
+    return 1 if failed else 0
 
 
 def tls_endpoint(target):

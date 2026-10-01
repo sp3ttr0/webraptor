@@ -49,6 +49,23 @@ class UnitTests(unittest.TestCase):
             self.assertEqual(w.main(['example.com', '--exclude', excluded]), 1)
         self.assertEqual([call.args[0] for call in which.call_args_list], ['curl'])
 
+    def test_progress_states_and_no_secret_urls(self):
+        stream = io.StringIO()
+        target = 'https://example.com/private?token=secret-token'
+        with contextlib.redirect_stderr(stream), w.Progress([(target, True)], ['curl'], interval=.01) as progress:
+            progress.update(target, 'curl', 'running')
+            progress.render()
+            progress.update(target, 'curl', 'completed')
+        text = stream.getvalue()
+        self.assertIn('queued=1', text)
+        self.assertIn('running=1', text)
+        self.assertIn('completed=1', text)
+        self.assertNotIn('secret-token', text)
+        quiet = io.StringIO()
+        with contextlib.redirect_stderr(quiet), w.Progress([(target, True)], ['curl'], enabled=False) as progress:
+            progress.update(target, 'curl', 'running')
+        self.assertEqual(quiet.getvalue(), '')
+
     def test_normalization_and_deduplication(self):
         with tempfile.TemporaryDirectory() as temp:
             targets = Path(temp) / 'targets.txt'
@@ -253,6 +270,67 @@ class IntegrationTests(unittest.TestCase):
                 proc.kill()
                 proc.communicate()
 
+    def manifest(self):
+        return sorted((self.root / 'results' / '_runs').glob('*/run.json'))[-1]
+
+    def resume(self, manifest, *extra):
+        with patch.object(w, 'probe_target', side_effect=lambda target, *a: (target, {'status': 'reachable'})), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return w.main(['--resume', str(manifest), '--no-progress', *extra])
+
+    def test_check_tools_without_target_or_network(self):
+        output = io.StringIO()
+        with patch.object(w, 'probe_target') as probe, contextlib.redirect_stdout(output):
+            self.assertEqual(w.main(['--check-tools']), 0)
+        probe.assert_not_called()
+        self.assertIn('nuclei: OK', output.getvalue())
+        self.assertFalse((self.root / 'results').exists())
+        with patch.dict(os.environ, {'WEBRAPTOR_TEST_HELP': 'missing'}), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(w.main(['--check-tools', '--modules', 'curl']), 1)
+
+    def test_resume_preserves_completed_and_retries_failed(self):
+        events = self.root / 'events'
+        with patch.dict(os.environ, {'WEBRAPTOR_TEST_FAIL_MODULE': 'nikto'}):
+            self.assertEqual(self.run_main('--modules', 'curl,nikto', '--no-progress'), 1)
+        old = self.summaries()[0]
+        original = Path(old['run_directory']) / 'curl_results.txt'
+        before = original.read_bytes()
+        manifest = self.manifest()
+        with patch.dict(os.environ, {'WEBRAPTOR_TEST_EVENTS': str(events)}):
+            self.assertEqual(self.resume(manifest, '--tool-timeout', '60'), 0)
+        starts = [json.loads(line)['module'] for line in events.read_text().splitlines() if json.loads(line)['event'] == 'start']
+        self.assertEqual(starts, ['nikto'])
+        latest = sorted(self.summaries(), key=lambda r: r['started_at'])[-1]
+        self.assertIn('reused_from', latest['modules'][0])
+        self.assertEqual(original.read_bytes(), before)
+        self.assertNotEqual(latest['run_directory'], old['run_directory'])
+
+    def test_resume_modified_output_reruns_and_auth_is_not_saved(self):
+        self.assertEqual(self.run_main('--modules', 'curl', '--no-progress', '-H', 'Authorization: Bearer private-resume-token'), 0)
+        manifest = self.manifest()
+        self.assertNotIn('private-resume-token', manifest.read_text())
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            w.parse_args(['--resume', str(manifest)])
+        (Path(self.summaries()[0]['run_directory']) / 'curl_results.txt').write_text('modified')
+        self.assertEqual(self.resume(manifest, '-H', 'Authorization: Bearer new-session-token'), 0)
+        latest = sorted(self.summaries(), key=lambda r: r['started_at'])[-1]
+        self.assertNotIn('reused_from', latest['modules'][0])
+
+    def test_resume_completed_does_not_require_tools_or_probe(self):
+        self.assertEqual(self.run_main('--modules', 'curl', '--no-progress'), 0)
+        with patch.object(w, 'tool_executable', return_value=None), patch.object(w, 'probe_target') as probe, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(w.main(['--resume', str(self.manifest()), '--no-progress']), 0)
+        probe.assert_not_called()
+
+    def test_resume_pending_target_from_manifest(self):
+        self.assertEqual(self.run_main('--modules', 'curl', '--no-progress'), 0)
+        manifest = self.manifest()
+        data = json.loads(manifest.read_text())
+        data['targets'].append(['https://pending.test/', True])
+        manifest.write_text(json.dumps(data))
+        self.assertEqual(self.resume(manifest), 0)
+        latest_batch = json.loads((self.manifest().parent / 'summary.json').read_text())
+        self.assertEqual(len(latest_batch['targets']), 2)
+
     def test_all_modules_and_html_escaping(self):
         self.assertEqual(self.run_main(), 0)
         summary = self.summaries()[0]
@@ -339,11 +417,20 @@ class IntegrationTests(unittest.TestCase):
 
     def test_cancellation_and_no_launch_after_stop(self):
         stop = threading.Event()
-        timer = threading.Timer(.2, stop.set)
+        events = self.root / 'cancel-events'
+        def cancel_when_running():
+            deadline = time.monotonic() + 5
+            while not events.exists() and time.monotonic() < deadline:
+                time.sleep(.01)
+            stop.set()
+        timer = threading.Thread(target=cancel_when_running)
         timer.start()
-        with patch.dict(os.environ, {'WEBRAPTOR_TEST_MODE': 'hang'}):
-            result = w.run_command([str(self.bin / 'whatweb')], self.root / 'out', self.root / 'err', 10, stop, w.Redactor())
-        timer.join()
+        try:
+            with patch.dict(os.environ, {'WEBRAPTOR_TEST_MODE': 'hang', 'WEBRAPTOR_TEST_EVENTS': str(events)}):
+                result = w.run_command([str(self.bin / 'whatweb')], self.root / 'out', self.root / 'err', 10, stop, w.Redactor())
+        finally:
+            timer.join()
+        self.assertTrue(events.exists(), 'Scanner must start before testing cancellation')
         self.assertEqual(result['status'], 'cancelled')
         with patch.object(w.subprocess, 'Popen') as popen:
             result = w.run_command(['whatweb'], self.root / 'out', self.root / 'err', 10, stop, w.Redactor())
