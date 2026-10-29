@@ -1,158 +1,102 @@
-# WebRaptor
+<p align="center">
+  <img src="assets/bident-logo.svg" alt="Bident logo" width="160">
+</p>
 
-WebRaptor runs eight web reconnaissance and security scanners in one workflow, with automatic finding verification, HTML/JSON reports, concurrency limits, timeouts, credential redaction, and resumable runs.
+# Bident
 
-**Use only on systems you own or have explicit permission to assess.**
+Network VAPT Toolkit by **sp3ttr0**. Discovers hosts, scans TCP/UDP ports, runs follow-up checks on confirmed open ports, and generates an HTML report with affected Host:Port lists, copy buttons, and source evidence.
 
-## Installation
+## Setup
 
-Requires **Python 3.9+**. On **Kali Linux or Parrot OS**, run as your normal user:
-
-```bash
-./install.sh
-source .venv/bin/activate
-python webraptor.py --check-tools
-```
-
-The installer uses sudo for apt, installs scanner dependencies and Nuclei templates, creates `.venv`, and verifies all eight modules. It prefers distro packages, with official upstream fallbacks under `.venv`/`.tools`. Downloaded Go archives are SHA256-checked. Network access is required; installation does not scan a target or upgrade the distribution. The installer rejects other operating systems.
-
-For manual setup on Linux or macOS, install the scanners below in `PATH`, then:
+Designed for Kali/Parrot-style Debian systems. Clone the repository, enter its folder, then run:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python webraptor.py --check-tools
+chmod +x bident.sh
+./bident.sh --check-deps
+sudo ./bident.sh --install-deps
 ```
 
-`requirements.txt` installs Python dependencies only; external tools are listed in its comments. `--check-tools` checks executable versions and required CLI flags, not scan accuracy or complete runtime readiness. Automatic TLS verification uses **sslscan**, even when its standalone module is excluded.
+Automatic installation uses configured apt repositories; unavailable packages are skipped.
 
-Validated on **Kali Rolling ARM64 in Docker on 29 Oct 2026**: the installer and all eight `--check-tools` checks passed. Kali’s Dirsearch launcher is wrapped to use its system Python dependencies separately from WebRaptor’s virtual environment. Parrot and x86_64 installation still need native validation.
-
-## Included scanners
-
-| Module | Purpose |
-| --- | --- |
-| [curl](https://curl.se/) | HTTP HEAD response headers and redirects |
-| [whatweb](https://github.com/urbanadventurer/WhatWeb) | Technology fingerprinting |
-| [nikto](https://github.com/sullo/nikto) | Web server checks |
-| [waybackurls](https://github.com/tomnomnom/waybackurls) | Historical URLs from public archives |
-| [dirsearch](https://github.com/maurosoria/dirsearch) | Directory and file discovery |
-| [nuclei](https://github.com/projectdiscovery/nuclei) | Template-based checks |
-| [testssl](https://github.com/testssl/testssl.sh) | TLS configuration checks; accepts `testssl` or `testssl.sh` |
-| [sslscan](https://github.com/rbsec/sslscan) | TLS protocols, ciphers, and certificate details |
+Core dependencies include Bash, Nmap, screen, sudo, and standard Unix utilities. Optional tools: NetExec, ssh-audit, impacket-rpcdump, rpcclient, ldapsearch, dig, testssl, sslscan, ike-scan, Responder, and Metasploit.
 
 ## Usage
 
+Run scans with sudo from your normal account:
+
 ```bash
-# Run all eight scanners and automatic verification
-python webraptor.py https://example.com
+# Scan a scope file; save results in a Git-ignored folder.
+sudo ./bident.sh -f scope.txt -o results/
 
-# Select or exclude scanners
-python webraptor.py https://example.com --modules curl,nuclei --tool-timeout 600
-python webraptor.py https://example.com --exclude nikto,dirsearch
+# Scan one host without UDP.
+sudo ./bident.sh -t 192.0.2.10 --no-udp
 
-# TLS on a specific port
-python webraptor.py https://example.com:8443 --modules testssl,sslscan
+# Scan all ports.
+sudo ./bident.sh -f scope.txt -p- -T4
 
-# Multiple targets, one per line; blank lines and # comments are ignored
-python webraptor.py --targets-file targets.txt --target-concurrency 2 --threads 3
-
-# Custom scanner inputs
-python webraptor.py https://example.com --wordlist paths.txt --nuclei-template templates/
+# Resume an existing scan.
+sudo ./bident.sh --resume results/
 ```
 
-Use either a target or `--targets-file` (`-l`). `--exclude` is repeatable and applies after `--modules`. Run `python webraptor.py --help` for every option.
+| Option | Purpose / default |
+|---|---|
+| `-f <file>` / `-t <host>` | Scope file or single host |
+| `-o <dir>` | Results folder; defaults to `bident_results_<timestamp>` |
+| `--resume <dir>` | Resume an existing results folder |
+| `-p-` | Scan all TCP/UDP ports |
+| `--no-udp` | Skip UDP scans and follow-ups |
+| `--no-msf` | Skip Metasploit |
+| `--script-timeout T` | Per NSE script instance; **30m**; `0` = unlimited |
+| `--tool-timeout N` | External-tool timeout in seconds; disabled by default |
+| `--msf-timeout N` | Per Metasploit module process, in seconds; **120** |
+| `--msf-threads N` | Metasploit scanner threads; **16** |
+| `-T1` … `-T5` | Nmap timing; **-T4** |
+| `--responder` | Start Responder on `eth0`; continues after Bident finishes |
 
-| Option | Default | Purpose |
-| --- | --- | --- |
-| `--output-dir` | `results` | Report directory |
-| `--threads` | `6` | Maximum active scanner processes globally |
-| `--target-concurrency` | `1` | Concurrent target workflows |
-| `--tool-timeout` | `1800` | Seconds per scanner, excluding queue time |
-| `--probe-timeout` | `8` | HTTP probe timeout in seconds |
-| `--nuclei-rate` | `20` | Requests/second per Nuclei process |
-| `--dirsearch-rate` | `10` | Requests/second per Dirsearch process |
-| `--dirsearch-threads` | `10` | Workers per Dirsearch process |
-| `--whatweb-wait` | `1` | Seconds between WhatWeb connections |
-| `--nikto-pause` | `1` | Seconds between Nikto requests |
-| `--no-progress` | Off | Hide live progress |
+Use `./bident.sh --help` for full usage. The SNMP community list is `wordlists/snmp_communities.txt`.
 
-Rate limits are **per process**, not a global traffic cap. Bare domains try HTTPS then HTTP; explicit URLs keep their scheme unless `--allow-scheme-fallback` is supplied. Any HTTP response, including 4xx/5xx, counts as reachable. TLS checks use the original HTTPS host/port; explicit HTTP targets skip TLS checks. `--insecure` affects the reachability probe and curl, not every scanner. Ctrl+C, SIGTERM, and timeouts terminate scanner process groups and preserve partial output when possible.
+## Scan Behavior
 
-## Reports and verification
+- The UDP base scan uses `-sU` without version detection. UDP NSE output remains in the report evidence and does not populate the Services table. The Services table shows only UDP base-scan information; missing details remain blank.
 
-Each target automatically receives **22 checks** covering:
+- NetExec SMB and rpcdump dependencies are checked silently before discovery. Failures are reported and the affected tool is skipped.
+- SSL/TLS checks cover **443 and 8443**, after NSE and before Metasploit. testssl is primary, sslscan cross-checks, and SSL/TLS NSE runs only when neither is installed.
+- TLS tools have a fixed **30-minute timeout per tool per Host:Port**, requiring GNU `timeout` or `gtimeout`. This is independent of `--tool-timeout`.
+- Ghostcat runs only for confirmed open TCP 8009 hosts, requesting `/WEB-INF/web.xml`. Valid deployment XML is copied to `metasploit/loot/` and included as **Apache Tomcat AJP File Read (Ghostcat)**; Python 3 is required for XML validation. Host attribution, retrieved XML, and SHA-256 hashes of the saved file and full log are rechecked when building the report.
+- Each Metasploit module runs separately, with complete stdout/stderr captured. Separate processes add console startup time. Verified findings print a success notification; runtime failures and timeouts print **Incomplete** with a log path. Affected Host:Port lists remain in the report.
+- Findings require qualifying saved evidence tied to the host and port. Failed or ambiguous checks are excluded from affected lists; this does not independently verify exploitability.
+- Credential entries retain their evidence and Host:Port. Unknown endpoints show **Not identified**; enumerated usernames alone do not confirm passwords. Credential copy buttons cover the displayed entries, up to 80.
 
-- Missing security headers: HSTS, CSP, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, COOP, CORP, and COEP.
-- Insecure CSP indicators, duplicate security headers, legacy X-Frame-Options/X-XSS-Protection, and compression/BREACH prerequisites.
-- Weak TLS ciphers, TLS 1.3 rejection, SSLv2/SSLv3/TLS 1.0/TLS 1.1 acceptance, wildcard certificates, weak certificate signature hashes, and expired certificates.
-
-The HTML report includes target details, collapsible scanner sections, raw output under **Evidence**, and a **Findings Summary** containing only `found` checks with `verified=true`. WhatWeb/Nikto results use tables; Dirsearch lists all recorded response codes, sorted and color-coded, with size and linked URL. Waybackurls lists linked historical URLs. Links open in new tabs. Reports support light/dark themes and use no external assets.
-
-JSON retains all checks, including `potential`, `unknown`, `not_found`, and `not_applicable` results. Evidence records collector/tool provenance, artifact paths, and SHA256 where available. Supplementary scanner output is distinguished from primary verification evidence. WebRaptor assigns no severity ratings or remediation guidance; original scanner data is retained.
-
-**Verified means the observation was evidenced, not that exploitation succeeded.** An empty Findings Summary does not establish a clean assessment. Header checks apply only to the exact URL response. The HTTP collector uses GET without redirects, with a 2 MiB decoded-body limit; it does not execute JavaScript. TLS failures can remain unknown; wildcard checks require certificate validation. CSP indicators and compression alone do not prove an exploitable vulnerability. Scanner matches require review.
+## Results
 
 ```text
-results/
-├── _runs/<run-id>/           # run.json resume manifest, batch summary/report
-└── <target-key>/<run-id>/
-    ├── report.html          # Scanner execution summary
-    ├── summary.json
-    ├── verification.html    # Scanner sections and verified findings
-    ├── verification.json   # Complete check record
-    ├── scan.log
-    └── ...                  # Raw scanner output and verification evidence
+report.html              Searchable report, findings, evidence, and copy buttons
+summary.json             Machine-readable summary
+base_scans/              Nmap base scan outputs
+nmap_scripts/            NSE results
+tool_results/            External-tool results
+metasploit/results/      Per-module Metasploit output
+metasploit/msfconsole.log Combined Metasploit console output
+logs/                    Execution errors and scan logs
+targets_with_open_ports/ Service tables and target lists
 ```
 
-## Authentication
+Verified external-tool findings print **Found and verified** without affected Host:Port lists; completed checks with no verified finding stay silent. Failed external, TLS, and Metasploit checks print **Incomplete** and appear under **Core Artifacts**. Full evidence is retained without truncation. Start time, finish time, and runtime appear in the terminal and report; resumed scans measure the current invocation.
 
-Prefer files to avoid putting credentials in shell history:
+When launched with sudo, results ownership and owner access are restored to the invoking user on completion, cancellation, and ordinary errors. Forced termination or shutdown may still require manual permission repair.
 
-```bash
-python webraptor.py https://app.example.com \
-  --headers-file headers.txt --cookie-file cookies.txt
-```
+## Tests
 
-Header files contain one `Name: value` per line; cookie files contain only the cookie value, such as `session=TOKEN`. Repeatable `-H` and `--cookie` are also supported. HTTP credentials are not sent to Waybackurls or sslscan; testssl headers apply only to its HTTP checks. Authenticated target lists must use one host and port. Automatic login, token refresh, and session validation are not provided.
+Run `bash tests/run.sh` to check findings/credentials, Metasploit, reports/permissions, runtime handling, TLS, and clipboard actions. Tests use synthetic output and mocked tools; they do not run live scans. Requires Bash, Python 3, Node.js, and standard Unix utilities. Each shell suite can also run individually.
 
-Known supplied secrets are redacted from saved text, but may be visible in process arguments or temporary output during execution. Binary artifacts and newly discovered secrets are not comprehensively sanitized. Curl follows redirects; custom headers may reach redirect destinations. Review evidence before sharing.
+## Git Hygiene
 
-## Resume
+Keep source, documentation, `tests/` with synthetic data, and the bundled wordlist in Git. Never commit real scan results, client scope files, credentials, or logs. Standard outputs are ignored; add custom output folders to `.gitignore` and review `git status --short` and `git diff --cached` before committing. Ignore rules do not protect already tracked files.
 
-```bash
-python webraptor.py --resume results/_runs/<run-id>/run.json
-# Resupply credentials when needed; the batch directory is also accepted
-python webraptor.py --resume results/_runs/<run-id> \
-  --headers-file headers.txt --cookie-file cookies.txt
-```
+## Disclaimer
 
-Resume creates a **new run**, reusing completed scanner artifacts only when their SHA256 checks match. Incomplete or modified outputs run again; verification always runs fresh. Keep the original directory layout and referenced templates/wordlists. Credentials are not stored in manifests and must be resupplied. Timeouts, concurrency, output location, and a subset of modules can change; other scan settings cannot.
-
-## Exit codes
-
-| Code | Meaning |
-| --- | --- |
-| `0` | Applicable modules completed and checks reached an assessment, or tool checks passed; findings may still exist |
-| `1` | Execution/tool/output error or incomplete verification, including unknown checks |
-| `2` | Invalid arguments or input |
-| `130` | Ctrl+C or SIGTERM interruption |
-
-## Testing
-
-```bash
-# Unit and integration tests using mocks and loopback fixtures
-.venv/bin/python -m unittest discover -s tests -v
-
-# Native verification smoke test; requires openssl, curl, and sslscan
-.venv/bin/python tests/local_findings_smoke.py
-```
-
-The smoke test exercises all 22 checks across five local HTTPS profiles and compares HTML/JSON results. Its temporary CA is never installed in system trust. Add `--serve` to preview saved reports. Real-scanner demos are available under `tests/fixtures/scanner_demo/`; the five-scanner demo includes public archive lookups.
-
-Generated `results/`, `.venv/`, `.tools/`, and Python caches are excluded by `.gitignore`. Keep credentials and private target lists out of version control.
+Use only on systems you own or are explicitly authorized to assess. Review findings before acting; automated results can contain false positives. The owner and contributors are not liable for unauthorized or harmful use.
 
 ## License
 
-[MIT License](LICENSE). For educational and authorized security assessments only.
+No license is included yet; choose one before publishing.
