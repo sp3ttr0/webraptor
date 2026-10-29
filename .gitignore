@@ -1,0 +1,23 @@
+__pycache__/
+.venv/
+.tools/
+results/
+
+# OS/editor files
+.DS_Store
+.pytest_cache/
+*.py[cod]
+
+# Local credentials and private scan inputs
+.env
+.env.*
+!.env.example
+headers.txt
+cookies.txt
+targets.txt
+credentials/
+secrets/
+*.key
+*.pem
+*.p12
+*.pfx
