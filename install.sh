@@ -38,6 +38,16 @@ install_distro_tool() {
     die "No package or executable found for $executable. Check your official Kali/Parrot apt sources."
 }
 
+wrap_distro_dirsearch() {
+    # Kali's /usr/bin/dirsearch is a shell launcher using bare python3.
+    # Keep its distro Python dependencies separate from WebRaptor's venv.
+    local system_path='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+    local distro_dirsearch
+    distro_dirsearch="$(PATH="$system_path" command -v dirsearch)" || die 'Distro Dirsearch executable is missing.'
+    printf '#!/usr/bin/env bash\nexport PATH=%q\nexec %q "$@"\n' "$system_path" "$distro_dirsearch" > "$SCRIPT_DIR/.venv/bin/dirsearch"
+    chmod +x "$SCRIPT_DIR/.venv/bin/dirsearch"
+}
+
 ensure_go() {
     if command -v go >/dev/null && "$PYTHON" -c '
 import re,subprocess,sys
@@ -163,6 +173,7 @@ install_distro_tool testssl testssl.sh testssl
 install_distro_tool sslscan sslscan
 if package_available dirsearch; then
     apt_install dirsearch
+    wrap_distro_dirsearch
 elif ! command -v dirsearch >/dev/null; then
     log 'Installing Dirsearch in its own isolated Python environment'
     python3 -m venv "$SCRIPT_DIR/.tools/dirsearch"

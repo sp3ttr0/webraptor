@@ -153,3 +153,21 @@ finish_install
             self.bootstrap(root)
             self.assertTrue((root / 'go/go1.99.0/archive.sha256').is_file())
             self.assertEqual((root / 'go-path').read_text().strip(), str(root / 'go/go1.99.0/go/bin'))
+
+    def test_distro_dirsearch_wrapper_uses_system_path(self):
+        with tempfile.TemporaryDirectory(prefix='installer path ') as temp:
+            folder = Path(temp)
+            (folder / '.venv/bin').mkdir(parents=True)
+            tool = folder / 'distro dirsearch'
+            tool.write_text('#!/bin/sh\nprintf "PATH=%s\\nARG=%s\\n" "$PATH" "$1"\n')
+            tool.chmod(0o755)
+            run = self.shell('''
+SCRIPT_DIR="$2"
+# Use a fixture lookup while preserving the wrapper's actual execution.
+command() { if [[ "$1" == -v && "$2" == dirsearch ]]; then printf '%s\\n' "$SCRIPT_DIR/distro dirsearch"; else builtin command "$@"; fi; }
+wrap_distro_dirsearch
+"$SCRIPT_DIR/.venv/bin/dirsearch" '--version'
+''', temp)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertIn('ARG=--version', run.stdout)
+            self.assertNotIn('.venv/bin', run.stdout)
