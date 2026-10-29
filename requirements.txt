@@ -1,2 +1,40 @@
+# WebRaptor Python runtime: Python 3.9+ on Linux or macOS.
+# Install these direct Python dependencies with:
+#   python3 -m pip install -r requirements.txt
+# pip resolves their transitive Python dependencies automatically.
+# Kali/Parrot: ./install.sh installs both this Python layer and external tools,
+# installs Nuclei templates, then verifies all eight modules with --check-tools.
 colorama>=0.4.6,<1
 httpx>=0.27,<1
+
+# External scanner dependencies (executables must be available in PATH).
+# These are NOT PyPI requirements; install through your distribution's package
+# manager or the official upstream installer. pip cannot install the full toolset.
+# All eight are needed for the default scan; --modules/--exclude select scanner
+# modules. Automatic verification also uses sslscan independently of selection.
+#
+# curl         https://curl.se/
+# whatweb      https://github.com/urbanadventurer/WhatWeb
+# nikto        https://github.com/sullo/nikto
+# waybackurls  https://github.com/tomnomnom/waybackurls
+# dirsearch    https://github.com/maurosoria/dirsearch
+# nuclei       https://github.com/projectdiscovery/nuclei
+# testssl      https://github.com/testssl/testssl.sh
+#              Either testssl or testssl.sh is accepted.
+# sslscan      https://github.com/rbsec/sslscan
+#
+# Scanner runtimes/assets, provided by their packages or upstream setup:
+# - Ruby and WhatWeb's required gems: ipaddr, addressable, json.
+#   Newer Ruby installations may also require getoptlong.
+# - Perl and Nikto's upstream runtime modules/database.
+# - Python and Dirsearch's own dependencies/default wordlist, managed separately.
+# - Bash, OpenSSL and testssl's upstream runtime utilities/data files.
+# - sslscan's OpenSSL runtime libraries (or a supported statically linked build).
+# - Nuclei templates, or a compatible template supplied via --nuclei-template.
+# - Go is needed only when building waybackurls/Nuclei from source, not when
+#   using prebuilt binaries. Build tools are not WebRaptor runtime dependencies.
+#
+# Keep any custom --wordlist and --nuclei-template paths available for scans.
+# Verify installed CLI versions and flags without scanning:
+#   python3 webraptor.py --check-tools
+# See README.md for setup, compatibility requirements and verification limits.

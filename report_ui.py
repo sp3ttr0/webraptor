@@ -1,0 +1,136 @@
+"""Shared offline report shell, adapted from Bident's palette and panel layout."""
+import base64
+import hashlib
+import html
+from datetime import datetime, timezone
+from urllib.parse import urlsplit
+
+RAPTOR_LOGO = '''<svg class="raptor-logo" viewBox="10 14 112 100" role="img" aria-label="WebRaptor velociraptor head logo" xmlns="http://www.w3.org/2000/svg">
+<path fill="#279c99" stroke="#76ddd0" stroke-width="2" stroke-linejoin="round" d="M17 111 23 79 12 62 24 42 37 24 57 15 76 20 88 30 112 37 121 48 117 61 91 65 74 59 62 68 77 76 100 71 113 74 104 86 80 94 61 85 53 91 51 113Z"/>
+<path fill="#53c5b2" d="m24 43 17-17 17-7 16 5 10 10-24-7-20 13-13 22 8 18-8 28-6 1 6-31-11-15Z"/>
+<path fill="#103443" d="m39 43 18-12 20 5-15 13-16 1Z"/>
+<path fill="#fbbf24" d="m48 41 13-5-5 9-7 1Z"/>
+<path fill="#10283b" d="m54 38 3-1-1 7-3 1Z"/>
+<path fill="#103443" stroke="#103443" stroke-width="2" stroke-linejoin="round" d="m73 54 40-9 3 6-4 8-21 3Z"/>
+<path fill="#fff3d8" d="m80 53 7-2-2 7Zm11-3 7-1-3 8Zm11-2 7-1-3 8Z"/>
+<path fill="#103443" d="m64 72 18 7 22-4-6 9-17 5-19-9Z"/>
+<path fill="#a0e2cc" d="m69 78 11 5 18-4-3 4-14 3Z"/>
+<path fill="#16676e" d="m31 66 13-9-8 17 8 13-8 13 2-16Z"/>
+<ellipse cx="109" cy="40" rx="2.5" ry="1.7" fill="#103443"/>
+</svg>'''
+
+DISCLAIMER = (
+    'Automated results may be incomplete or inaccurate. Verified means observed, not exploited. '
+    'Validate findings before acting. Authorized testing only.'
+)
+THEME_SCRIPT = """(() => {
+  const root = document.documentElement;
+  const button = document.getElementById('themeToggle');
+  let saved = null;
+  try { saved = localStorage.getItem('webraptor-theme'); } catch (_) {}
+  const preferred = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  function apply(theme) {
+    root.dataset.theme = theme;
+    button.title = theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+    button.setAttribute('aria-label', theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+    button.setAttribute('aria-pressed', String(theme === 'dark'));
+    try { localStorage.setItem('webraptor-theme', theme); } catch (_) {}
+  }
+  apply(saved === 'dark' || saved === 'light' ? saved : preferred);
+  button.addEventListener('click', () => apply(root.dataset.theme === 'dark' ? 'light' : 'dark'));
+  const findings = document.getElementById('findings-summary');
+  if (findings) {
+    for (const [id, open] of [['expandAll', true], ['collapseAll', false]]) {
+      const control = document.getElementById(id);
+      if (control) control.addEventListener('click', () => {
+        findings.querySelectorAll('details.finding').forEach(item => { item.open = open; });
+      });
+    }
+  }
+})();"""
+SCRIPT_HASH = base64.b64encode(hashlib.sha256(THEME_SCRIPT.encode()).digest()).decode()
+STYLE = """
+:root{color-scheme:light;--bg:#eef4ff;--bg-accent:#f7fbff;--panel:#fff;--text:#18202a;--muted:#657080;--line:#cfd9ea;--accent:#2457c5;--accent-2:#7da8e8;--chip:#e8f0ff;--chip-text:#153f9f;--code-bg:#101827;--code-text:#e5eefc;--warning-bg:#fff7e6;--warning-line:#d69321;--warning-text:#714400;--shadow:0 12px 30px rgba(31,65,120,.10)}
+[data-theme=dark]{color-scheme:dark;--bg:#0c1220;--bg-accent:#111a2d;--panel:#151f33;--text:#edf4ff;--muted:#9fb0c9;--line:#2a3954;--accent:#6ea8ff;--accent-2:#8bb5f0;--chip:#1d345d;--chip-text:#bfdbff;--code-bg:#070b12;--code-text:#e7edf7;--shadow:0 12px 30px rgba(0,0,0,.28)}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(135deg,var(--bg),var(--bg-accent));color:var(--text);font:14px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh}
+main{max-width:1480px;margin:0 auto;padding:32px 24px}header{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:24px}.brand{display:flex;gap:16px;align-items:flex-start}.mark{display:grid;place-items:center;flex-shrink:0;width:84px;height:76px;border-radius:18px;background:transparent;color:var(--text);font-weight:800;letter-spacing:1px;font-size:20px}h1{font-size:28px;line-height:1.2;margin:0 0 8px}h2{font-size:21px}p{overflow-wrap:anywhere}a{color:var(--accent)}small,.muted{color:var(--muted)}.subtitle{margin:0;color:var(--muted);overflow-wrap:anywhere}
+button{border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--text);padding:11px 15px;font:inherit;font-weight:600;cursor:pointer;white-space:nowrap}button:hover{border-color:var(--accent)}button:focus-visible,a:focus-visible{outline:3px solid var(--accent-2);outline-offset:3px}
+.findings-header{display:flex;align-items:center;justify-content:space-between;gap:16px}.findings-header h2{display:flex;align-items:center;gap:8px;margin:0;line-height:1.2}.finding-count{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border-radius:50%;background:var(--chip);color:var(--chip-text);border:1px solid var(--line);font-size:11px;line-height:1;font-weight:700;font-variant-numeric:tabular-nums;flex-shrink:0;align-self:center}.finding-controls{display:flex;gap:8px;flex-shrink:0;margin:0}.findings-header+.group-intro{margin-top:12px}.finding-controls button{display:grid;place-items:center;width:40px;height:40px;padding:9px}.finding-controls svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+[data-theme=dark]{--warning-bg:#2c2415;--warning-line:#b78025;--warning-text:#ffdda0}
+#themeToggle{width:44px;height:44px;display:grid;place-items:center;padding:10px;flex-shrink:0}#themeToggle svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.icon-sun{display:none}[data-theme=dark] .icon-sun{display:block}[data-theme=dark] .icon-moon{display:none}
+.brand{min-width:0;flex:1;display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;column-gap:16px;row-gap:8px}.brand>div:last-child{display:contents}.brand .mark{grid-column:1;grid-row:1}.brand h1{grid-column:2;grid-row:1;margin:0}.brand .subtitle{grid-column:2;grid-row:2}header{flex-wrap:nowrap!important}
+.mark .raptor-logo{display:block;width:100%;height:100%;overflow:visible}
+.notice.disclaimer{background:var(--warning-bg);border-color:var(--warning-line);border-left-color:var(--warning-line);color:var(--warning-text)}.notice.disclaimer p{color:var(--warning-text)}.warning-icon{margin-right:8px}
+.target-card{padding:20px;background:var(--panel);border:1px solid var(--line);border-top:3px solid var(--accent-2);border-radius:12px;box-shadow:var(--shadow);margin:22px 0}.target-card h2{margin:0 0 16px}.target-card dl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin:0}.target-field{min-width:0}.target-field.wide{grid-column:1/-1}.target-card dt{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em}.target-card dd{margin:4px 0 0;overflow-wrap:anywhere;font-weight:500}@media(max-width:700px){.target-card dl{grid-template-columns:repeat(2,minmax(0,1fr))}.target-card{padding:16px}}
+.report-timestamp{display:flex;flex-wrap:wrap;gap:4px 14px;font-variant-numeric:tabular-nums;overflow-wrap:normal}.report-timestamp span{white-space:nowrap}
+.notice{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--accent-2);border-radius:12px;padding:16px 20px;box-shadow:var(--shadow);margin:20px 0}.notice p{margin:5px 0 0;color:var(--muted)}
+nav{display:flex;flex-wrap:wrap;gap:12px;margin:24px 0}nav a{display:flex;align-items:center;gap:20px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 18px;text-decoration:none;box-shadow:var(--shadow)}nav strong{display:inline-grid;place-items:center;min-width:28px;height:28px;border-radius:8px;background:var(--chip);color:var(--chip-text)}
+section.finding-group{margin:32px 0;scroll-margin-top:20px}.group-intro{color:var(--muted)}.panel,.scroll{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow-x:auto;box-shadow:var(--shadow);margin:18px 0}
+table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{text-align:left;vertical-align:top;padding:14px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}th{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em;background:var(--chip)}tr:last-child td{border-bottom:0}td:first-child{font-weight:600}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 ui-monospace,SFMono-Regular,monospace;background:var(--code-bg);color:var(--code-text);padding:14px;border-radius:8px;max-height:480px;overflow:auto}.tool-source{padding:10px 0;border-bottom:1px solid var(--line)}.tool-source:last-child{border:0}.tool-source small{display:block}.chip{display:inline-block;background:var(--chip);color:var(--chip-text);padding:3px 8px;border-radius:5px;font-size:12px;font-weight:600}footer{text-align:center;font-size:12px;color:var(--muted);margin-top:36px;border-top:1px solid var(--line);padding-top:18px}
+@media(max-width:1050px){header{align-items:flex-start;flex-wrap:wrap}main{padding:24px 16px}h1{font-size:24px}table,tbody,tr,td{display:block}thead{display:none}.panel,.scroll{background:transparent;border:0;box-shadow:none;overflow:visible}tr{background:var(--panel);margin:16px 0;border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:var(--shadow)}td{border:0;padding:10px 14px}td:first-child{background:var(--chip);padding:14px}td:not(:first-child)::before{content:attr(data-label) ': ';font-weight:600;color:var(--muted)}td:nth-child(n+4)::before{display:block;margin-bottom:6px}nav a{flex:1 1 150px;justify-content:space-between}.brand{column-gap:12px;row-gap:8px}.mark{width:72px;height:65px;border-radius:15px}.notice{padding:14px}pre{max-height:360px}}
+.finding{margin:12px 0;border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:var(--shadow);overflow:hidden}.finding summary{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 18px;font-weight:600;cursor:pointer;list-style:none}.finding summary::-webkit-details-marker{display:none}.finding summary::after{content:'+';color:var(--accent);font-size:22px;font-weight:400;flex-shrink:0}.finding[open] summary::after{content:'−'}.finding[open] summary{border-bottom:1px solid var(--line);background:var(--chip)}.finding summary:hover{background:var(--chip)}.finding summary:focus-visible{outline:3px solid var(--accent-2);outline-offset:-3px}.finding-content{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:24px;padding:18px}.finding-content>div{min-width:0}.finding-content h3{margin:0 0 12px;font-size:13px;color:var(--muted)}@media(max-width:700px){.finding-content{grid-template-columns:minmax(0,1fr);gap:20px}.finding summary{padding:14px 16px}}
+.scanner-section{margin:22px 0;padding:22px;border:1px solid var(--line);border-top:3px solid var(--accent-2);border-radius:14px;background:var(--panel);box-shadow:var(--shadow);min-width:0}.scanner-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}.scanner-heading h2{margin:0}.scanner-heading p{margin:5px 0 14px;color:var(--muted)}.scanner-heading .chip{white-space:normal}.scanner-collapsible{padding:0}.scanner-disclosure>summary{padding:20px 22px;cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:16px}.scanner-disclosure>summary::-webkit-details-marker{display:none}.scanner-disclosure>summary::after{content:'+';font-size:24px;color:var(--accent)}.scanner-disclosure[open]>summary::after{content:'−'}.scanner-disclosure>summary .scanner-heading{flex:1}.scanner-disclosure>summary p{margin-bottom:0}.scanner-body{padding:0 22px 22px}.dirsearch-list{margin:16px 0;border:1px solid var(--line);border-radius:8px;overflow:hidden}.dirsearch-line{display:grid;grid-template-columns:100px 70px minmax(0,1fr);gap:12px;padding:9px 12px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}.response-code{display:inline-block;min-width:38px;text-align:center;padding:1px 6px;border-radius:5px;font-weight:700}.response-2xx{background:#dcfce7;color:#166534}.response-3xx{background:#dbeafe;color:#1e40af}.response-4xx{background:#fef3c7;color:#92400e}.response-5xx{background:#fee2e2;color:#991b1b}.response-1xx{background:#ede9fe;color:#5b21b6}[data-theme=dark] .response-2xx{background:#153e2d;color:#86efac}[data-theme=dark] .response-3xx{background:#1e365e;color:#93c5fd}[data-theme=dark] .response-4xx{background:#493514;color:#fcd34d}[data-theme=dark] .response-5xx{background:#4c2028;color:#fca5a5}[data-theme=dark] .response-1xx{background:#352452;color:#c4b5fd}.dirsearch-line:last-child{border:0}.dirsearch-labels{font-size:12px;color:var(--muted);background:var(--chip);font-weight:600}.dirsearch-line a{overflow-wrap:anywhere}@media(max-width:700px){.dirsearch-line{grid-template-columns:70px 45px minmax(0,1fr);gap:8px;padding:9px 8px;font-size:12px}.scanner-disclosure>summary{padding:16px}.scanner-body{padding:0 16px 16px}.scanner-section.scanner-collapsible{padding:0}}
+.scanner-table{margin:14px 0;overflow-x:auto;border:1px solid var(--line);border-radius:10px}.scanner-table table{table-layout:auto}.scanner-table th:first-child{width:15%}.scanner-evidence{margin-top:18px;border-top:1px solid var(--line);padding-top:14px}.scanner-evidence summary{cursor:pointer;color:var(--accent);font-weight:600}.scanner-empty{padding:16px;background:var(--chip);border-radius:8px;color:var(--muted)}.scanner-urls{max-height:360px;overflow:auto;padding:0;list-style:none;border:1px solid var(--line);border-radius:8px}.scanner-urls li{padding:9px 12px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.scanner-matches{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:12px;margin:14px 0}.scanner-matches article{border:1px solid var(--line);border-radius:10px;padding:16px;border-left:3px solid var(--accent)}.scanner-matches small{display:block}.scanner-artifacts{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}.scanner-artifacts summary{cursor:pointer;color:var(--accent)}.scanner-artifacts a{overflow-wrap:anywhere}@media(max-width:700px){.scanner-section{padding:16px}}
+@media print{body{background:white;color:black}main{padding:0;max-width:none}button,nav{display:none}.notice,.panel,.scroll,tr{box-shadow:none}tr{break-inside:avoid}pre{max-height:none;background:#f0f0f0;color:black}a{color:inherit}}
+"""
+
+
+def timestamp_markup(value):
+    """Readable UTC display with the original precision retained in markup."""
+    esc = lambda text: html.escape(str(text), quote=True)
+    try:
+        parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    except ValueError:
+        return esc(value)
+    zone = 'Time zone not recorded'
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc)
+        zone = 'UTC'
+    return ('<time class="report-timestamp" datetime="' + esc(value) + '" title="' + esc(value) +
+            '"><span>' + parsed.strftime('%d %b %Y') + '</span><span>' +
+            parsed.strftime('%H:%M:%S') + ' ' + zone + '</span></time>')
+
+
+def target_section(target, details=None):
+    esc = lambda value: html.escape(str(value), quote=True)
+    try:
+        parsed = urlsplit(target)
+        if parsed.scheme not in ('http', 'https') or not parsed.hostname:
+            return ''
+        port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+    except ValueError:
+        return ''
+    fields = [('URL', target), ('Host', parsed.hostname), ('Port', port), ('Scheme', parsed.scheme.upper())]
+    fields.extend((key, value) for key, value in (details or {}).items() if value is not None and value != '')
+    timestamp_keys = {'Checked', 'Started', 'Finished', 'Generated'}
+    rows = ''.join('<div class="target-field' + (' wide' if key in {'URL', 'Scope'} | timestamp_keys else '') +
+                   '"><dt>' + esc(key) + '</dt><dd>' +
+                   (timestamp_markup(value) if key in timestamp_keys else esc(value)) + '</dd></div>' for key, value in fields)
+    return '<section class="target-card" aria-labelledby="targetHeading"><h2 id="targetHeading">Target Details</h2><dl>' + rows + '</dl></section>'
+
+
+def page(title, body, subtitle='', target_details=None):
+    esc = lambda value: html.escape(str(value), quote=True)
+    recorded = (target_details or {}).get('Checked') or (target_details or {}).get('Started')
+    try:
+        footer_date = datetime.fromisoformat(str(recorded).replace('Z', '+00:00')) if recorded else datetime.now(timezone.utc)
+        zone = 'UTC' if footer_date.tzinfo is not None else 'time zone not recorded'
+        if footer_date.tzinfo is not None:
+            footer_date = footer_date.astimezone(timezone.utc)
+        date_label = footer_date.strftime('%d %b %Y') + ' (' + zone + ')'
+    except ValueError:
+        date_label = 'Date not recorded'
+    csp = "default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-" + SCRIPT_HASH + "'; base-uri 'none'; form-action 'none'"
+    return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width, initial-scale=1">'
+            '<meta http-equiv="Content-Security-Policy" content="' + esc(csp) + '">'
+            '<title>' + esc(title) + '</title><style>' + STYLE + '</style></head><body><main>'
+            '<header><div class="brand"><div class="mark">' + RAPTOR_LOGO + '</div><div><h1>' + esc(title) +
+            '</h1><p class="subtitle">' + esc(subtitle) + '</p></div></div>'
+            '<button id="themeToggle" type="button" aria-label="Switch to dark mode" title="Switch to dark mode" aria-pressed="false">'
+            '<svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 13A9 9 0 0 1 11 3.5 9 9 0 1 0 20.5 13Z"/></svg>'
+            '<svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg></button></header>'
+            '<aside class="notice disclaimer"><strong><span class="warning-icon" aria-hidden="true">⚠</span>Disclaimer</strong><p>' + esc(DISCLAIMER) + '</p></aside>' +
+            target_section(subtitle, target_details) + body +
+            '<footer>Generated by WebRaptor · For authorized security assessments only · Assessment date: ' + esc(date_label) + '</footer>'
+            '</main><script>' + THEME_SCRIPT + '</script></body></html>')

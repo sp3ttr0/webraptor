@@ -173,6 +173,7 @@ def parse_args(argv=None):
     parser.add_argument('target', nargs='?', help='Domain or HTTP(S) URL')
     parser.add_argument('-l', '--targets-file', help='One target per line; # comments allowed')
     parser.add_argument('--check-tools', action='store_true', help='Check versions and required CLI flags without scanning')
+    parser.add_argument('--verify-findings', action='store_true', help=argparse.SUPPRESS)  # Legacy no-op; verification is automatic.
     parser.add_argument('--resume', help='Previous batch directory or run.json; writes a new run')
     parser.add_argument('--no-progress', action='store_true', help='Disable live progress on stderr')
     parser.add_argument('--output-dir', default='results')
@@ -198,6 +199,8 @@ def parse_args(argv=None):
     cookie.add_argument('--cookie-file', help='File containing a Cookie header value')
     tokens = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(tokens)
+    if args.verify_findings and (args.resume or args.check_tools):
+        parser.error('--verify-findings cannot be combined with --resume or --check-tools')
     supplied = {token.split('=', 1)[0] for token in tokens if token.startswith('-')}
     args.resume_data = None
     if args.resume:
@@ -278,6 +281,7 @@ def load_resume(location):
         raise ValueError('Unknown manifest')
     if manifest.parent.parent.name != '_runs' or data['run_id'] != manifest.parent.name:
         raise ValueError('Manifest must remain in its original batch layout')
+    data['settings'].pop('js_advisories', None)  # Ignore the retired JavaScript-advisory setting in older v1 runs.
     if set(data['settings']) != set(SAVED_SETTINGS):
         raise ValueError('Incomplete settings')
     settings = data['settings']
@@ -423,8 +427,23 @@ def probe_target(url, explicit, args, stop):
 
 def terminate_group(proc, grace=1.0):
     """Terminate the whole process group, even if its original leader exited."""
+    def signal_group(sig):
+        try:
+            os.killpg(proc.pid, sig)
+        except PermissionError as exc:
+            # Darwin may return EPERM for a group whose only member became a
+            # zombie after poll(). Reap that leader and retry: an empty group
+            # then reports ESRCH. Keep genuine permission failures visible.
+            if sys.platform != 'darwin':
+                raise
+            try:
+                proc.wait(timeout=grace)
+            except subprocess.TimeoutExpired:
+                raise exc
+            os.killpg(proc.pid, sig)
+
     try:
-        os.killpg(proc.pid, signal.SIGTERM)
+        signal_group(signal.SIGTERM)
     except ProcessLookupError:
         proc.wait()
         return
@@ -432,13 +451,13 @@ def terminate_group(proc, grace=1.0):
     while time.monotonic() < deadline:
         proc.poll()  # Reap leader before checking whether descendants remain.
         try:
-            os.killpg(proc.pid, 0)
+            signal_group(0)
         except ProcessLookupError:
             proc.wait()
             return
         time.sleep(0.05)
     try:
-        os.killpg(proc.pid, signal.SIGKILL)
+        signal_group(signal.SIGKILL)
     except ProcessLookupError:
         pass
     proc.wait()
@@ -696,25 +715,42 @@ def write_json(path, value):
 
 
 def report_html(summary):
+    from report_ui import page
     esc = lambda value: html.escape(str(value), quote=True)
     rows, findings = [], []
     for module in summary['modules']:
         count = str(len(module['findings'])) if module['findings_status'] == 'complete' else module['findings_status'].replace('_', ' ')
         links = ' · '.join('<a href="' + quote(p, safe='/') + '">' + esc(p) + '</a>' for p in module['artifacts'])
-        rows.append('<tr><td>' + esc(module['module']) + '</td><td>' + esc(module['status']) +
-                    '</td><td>' + esc(module['duration_seconds']) + '</td><td>' + esc(count) +
-                    '</td><td>' + esc(module.get('error', '')) + '</td><td>' + links + '</td></tr>')
+        values = (esc(module['module']), esc(module['status']), esc(module['duration_seconds']), esc(count), esc(module.get('error', '')), links)
+        labels = ('Module', 'Status', 'Seconds', 'Findings', 'Details', 'Tool evidence')
+        rows.append('<tr>' + ''.join('<td data-label="' + label + '">' + value + '</td>' for label, value in zip(labels, values)) + '</tr>')
         for finding in module['findings']:
-            findings.append('<tr>' + ''.join('<td>' + esc(finding[key]) + '</td>' for key in ('severity', 'template_id', 'name', 'matched_at')) + '</tr>')
-    return '''<!doctype html><html lang="en"><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; base-uri 'none'; form-action 'none'">
-<title>WebRaptor scan report</title><style>
-body{font:16px system-ui,sans-serif;background:#101923;color:#e3edf5;margin:0;padding:36px;line-height:1.5}
-main{max-width:1300px;margin:auto}h1{color:#65e8b1}a{color:#7fcdff}table{border-collapse:collapse;width:100%;margin:24px 0}
-th,td{text-align:left;padding:12px;border-bottom:1px solid #334454;vertical-align:top;overflow-wrap:anywhere}
-.scroll{overflow-x:auto}.muted{color:#afc1d0}code{background:#233140;padding:3px}
-</style><main><h1>WebRaptor scan report</h1><p>''' + esc(summary['target']) + '</p><p>Status: <strong>' + esc(summary['status']) + '</strong> · Started: ' + esc(summary['started_at']) + '</p><p class="muted">Nuclei findings are scanner matches, not independently verified vulnerabilities. Other modules require raw-output review. A failed or partial scan never means no findings.</p><div class="scroll"><table><thead><tr><th>Module</th><th>Status</th><th>Seconds</th><th>Findings</th><th>Details</th><th>Output</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div><h2>Nuclei findings</h2><div class="scroll"><table><thead><tr><th>Severity</th><th>Template</th><th>Name</th><th>Location</th></tr></thead><tbody>' + ''.join(findings) + '</tbody></table></div><p><a href="summary.json">JSON summary</a> · <a href="scan.log">Scan log</a></p></main></html>'
+            findings.append('<tr><td data-label="Tool">Nuclei</td>' + ''.join('<td data-label="' + label + '">' + esc(finding[key]) + '</td>'
+                for key, label in (('template_id', 'Template'), ('name', 'Name'), ('matched_at', 'Location'))) + '</tr>')
+    verification = summary.get('verification', {})
+    verification_html = ('<h2>Finding verification</h2><p>Status: ' + esc(verification.get('status', 'unavailable')) +
+                         ' · <a href="verification.html">Verified findings and cited evidence</a> · '
+                         '<a href="verification.json">JSON</a></p>') if verification else ''
+    body = '<p>Status: <strong>' + esc(summary['status']) + '</strong> · Started: ' + esc(summary['started_at']) + '</p>' + verification_html
+    body += '<h2>Scanner modules and source artifacts</h2><div class="panel"><table><thead><tr><th>Module</th><th>Status</th><th>Seconds</th><th>Findings</th><th>Details</th><th>Tool evidence</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>'
+    body += '<h2>Nuclei scanner matches</h2><p class="muted">Scanner matches require validation. Tool-provided risk ratings remain in raw source data; this report assigns no risk ratings.</p><div class="panel"><table><thead><tr><th>Tool</th><th>Template</th><th>Name</th><th>Location</th></tr></thead><tbody>' + ''.join(findings) + '</tbody></table></div>'
+    body += '<p><a href="summary.json">JSON summary</a> · <a href="scan.log">Scan log</a></p>'
+    return page('WebRaptor Web Application Security Assessment Report', body, summary['target'],
+                {'Server': verification.get('server', 'Not recorded'), 'Started': summary['started_at'],
+                 'HTTP response': summary.get('probe', {}).get('http_status'),
+                 'Effective URL': summary.get('effective_target')})
+
+
+def verify_target(target, args, folder, slots, stop, redact, modules=()):
+    from verification import assess_target
+    # Verification's scanner shares the same global process budget.
+    while not stop.is_set():
+        if slots.acquire(timeout=0.1):
+            try:
+                return assess_target(target, args, folder, stop, run_command, redact, modules)
+            finally:
+                slots.release()
+    return assess_target(target, args, folder, stop, run_command, redact, modules)
 
 
 def scan_target(target, explicit, args, batch_id, slots, stop, redact):
@@ -775,8 +811,24 @@ def scan_target(target, explicit, args, batch_id, slots, stop, redact):
                     record(result['module'] + ': ' + result['status'])
                     write_json(folder / 'summary.json', summary)
             summary['modules'].sort(key=lambda m: args.modules.index(m['module']))
+            record('Finding verification started')
+            if getattr(args, 'progress', None):
+                args.progress.update(target, 'verification', 'running')
+            try:
+                summary['verification'] = verify_target(target, args, folder, slots, stop, redact, summary['modules'])
+            except Exception as exc:
+                from verification import CHECKS, render_report, enrich_finding
+                verification = {'target': redact(target), 'status': 'failed',
+                                'checks': [enrich_finding(check({'target': target, 'headers': [], 'error': type(exc).__name__})) for check in CHECKS]}
+                write_json(folder / 'verification.json', verification)
+                (folder / 'verification.html').write_text(render_report(verification), encoding='utf-8')
+                summary['verification'] = verification
+            record('Finding verification ' + summary['verification']['status'])
+            if getattr(args, 'progress', None):
+                args.progress.update(target, 'verification', summary['verification']['status'])
             summary['status'] = ('cancelled' if stop.is_set() else
-                                 'completed' if all(m['status'] in ('completed', 'not_applicable') for m in summary['modules']) else 'incomplete')
+                                 'completed' if (all(m['status'] in ('completed', 'not_applicable') for m in summary['modules'])
+                                                 and summary['verification']['status'] == 'completed') else 'incomplete')
         except Exception as exc:
             summary.update(status='failed', error=type(exc).__name__)
             record('Workflow failed: ' + type(exc).__name__)
@@ -798,9 +850,9 @@ def write_batch(folder, batch_id, results):
         path = os.path.relpath(Path(result['run_directory']) / 'report.html', folder)
         rows.append('<li><a href="' + quote(path, safe='/') + '">' + html.escape(result['target']) +
                     '</a> — ' + html.escape(result['status']) + '</li>')
-    (folder / 'report.html').write_text('<!doctype html><html lang="en"><meta charset="utf-8"><title>WebRaptor batch</title>'
-        '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; base-uri \'none\'">'
-        '<h1>WebRaptor batch</h1><ul>' + ''.join(rows) + '</ul><p><a href="summary.json">JSON summary</a></p></html>', encoding='utf-8')
+    from report_ui import page
+    (folder / 'report.html').write_text(page('WebRaptor Web Application Security Assessment Report', '<section class="notice"><h2>Targets</h2><ul>' +
+        ''.join(rows) + '</ul><p><a href="summary.json">JSON summary</a></p></section>', batch_id), encoding='utf-8')
 
 
 def main(argv=None):
@@ -835,7 +887,7 @@ def main(argv=None):
             'header_names': [name.lower() for name, _ in args.headers],
         })
         print('Resume manifest: ' + str(batch_folder / 'run.json'), flush=True)
-        with Progress(args.targets, args.modules, not args.no_progress) as progress, ThreadPoolExecutor(max_workers=min(args.target_concurrency, len(args.targets))) as pool:
+        with Progress(args.targets, args.modules + ['verification'], not args.no_progress) as progress, ThreadPoolExecutor(max_workers=min(args.target_concurrency, len(args.targets))) as pool:
             args.progress = progress
             futures = [pool.submit(scan_target, target, explicit, args, batch_id, slots, STOP, redact)
                        for target, explicit in args.targets]

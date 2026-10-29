@@ -4,7 +4,39 @@ WebRaptor combines eight web reconnaissance and security modules into a single-t
 
 ## Setup and modules
 
+On Kali Linux or Parrot OS, run the automatic installer as your normal user:
+
+```bash
+./install.sh
+source .venv/bin/activate
+python webraptor.py --help
+```
+
+The installer uses sudo for apt operations, refreshes package indexes, installs
+scanner packages and their runtimes, and creates a local `.venv` for
+`requirements.txt`. It prefers distro packages for all scanners. If unavailable,
+Dirsearch gets its own `.tools/dirsearch` environment, and Nuclei/waybackurls are
+built from their official Go modules into `.venv/bin`. A suitable Go toolchain is
+reused; otherwise an official stable Linux archive is downloaded from go.dev,
+verified against its published SHA256 and installed under `.tools/go`, without
+replacing system Go. The installer also downloads/updates Nuclei templates.
+
+It finishes by running `--check-tools` explicitly for all eight modules and exits
+nonzero if installation, template setup or any version/CLI check fails. It does
+not run a target scan. Network access and sudo/root access for apt are required.
+Reruns reuse local installations and let apt resolve current packages; no full
+distribution upgrade or repository change is performed. Fallback binaries are
+available after activating `.venv`; keep this checkout in place. macOS and other
+distributions are rejected before changes. Install compatible scanner versions
+if the final diagnostics report unsupported flags.
+
 Requires **Python 3.9+ on Linux or macOS**. Install selected tools and their dependencies using the upstream instructions, and put their executables in `PATH`.
+
+`requirements.txt` lists both the pip-installable Python dependencies and the
+external scanner/runtime/asset checklist. External tools are documented as comments:
+`pip install -r requirements.txt` installs the Python layer only. Install scanner
+packages through Kali/Parrot's package manager or their official upstream installers;
+automatic verification additionally uses sslscan regardless of module selection.
 
 | Module | Purpose / upstream |
 | --- | --- |
@@ -81,6 +113,117 @@ Use either a target or `-l`/`--targets-file`. Files contain one target per line;
 | `--cookie-file` | None | File containing a Cookie header value |
 
 Use `--help` for CLI help. Request-rate controls are **per process, not a global traffic limit**; concurrent rates add together. Waybackurls, testssl, and sslscan manage their own request/connection rates.
+
+## Finding verification
+
+All 22 built-in checks run automatically after the selected scanner modules for each target:
+
+```bash
+python3 webraptor.py https://app.example.com
+python3 webraptor.py https://app.example.com \
+  --headers-file headers.txt --cookie-file cookies.txt
+```
+
+Each check has its own function in `verification.py`. Checks cover missing HSTS,
+CSP, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, COOP, CORP and
+COEP; potentially insecure CSP; accepted weak TLS suites; TLS 1.3 rejection;
+response compression/BREACH prerequisites;
+wildcard certificates; legacy X-Frame-Options and X-XSS-Protection; and duplicate
+security headers. Six additional checks cover SSLv2, SSLv3, TLSv1.0 and TLSv1.1
+acceptance, weak leaf-certificate signature hashes (MD2/MD4/MD5/SHA-1), and expired
+leaf certificates. Protocol failures remain unknown unless a completed scan
+reached the server using other protocols. Certificate signature and UTC expiry
+observations from sslscan do not imply successful chain or hostname validation.
+
+Results contain a status (`found`, `not_found`, `potential`, `unknown`, or
+`not_applicable`), evidence, a `verified` observation flag and limitations.
+`verified` establishes the stated observation, **not successful exploitation**.
+HTML reports show only checks with `status=found` and `verified=true` in one
+Findings Summary section, ordered alphabetically. Potential, unknown, not-found
+and not-applicable results are omitted from the HTML list. The HTML omits redundant Status and Verified observation columns. JSON retains every
+check and its status/verification flags for auditing, and an empty list does not establish a clean assessment. Each entry includes its
+context and `evidence_sources`; assigned risk ratings have been removed
+from verification HTML and JSON. Original scanner data remains available as source
+artifacts, without interpreting scanner ratings as WebRaptor ratings.
+
+Each listed finding is collapsed by default; select its title (or use the keyboard)
+to expand the tool evidence and observation details. Expansion uses native HTML
+details controls and does not require JavaScript.
+Expand All and Collapse All buttons control every listed finding together when
+JavaScript is available; individual findings remain usable without it.
+
+The report design adapts Bident's palette, panels and header layout for WebRaptor.
+Verification, target and batch HTML reports include a short amber warning
+disclaimer and an accessible sun/moon light/dark toggle. Single-target reports
+show target details directly after the disclaimer: URL, host, port, scheme and
+the advertised HTTP Server header, HTTP status, timestamps and scope. Missing
+Server headers display as Not disclosed; unavailable collection is labeled
+Unavailable, and older reports without captured server data show Not recorded. Theme preference is saved locally when browser storage is
+available; blocked storage falls back safely. Reports have no external assets or
+network dependencies; a CSP hash permits only the fixed theme script, and all
+captured values are escaped before insertion into HTML.
+
+Evidence identifies the actual tool or probe, its collection status, artifact path
+and SHA256. HTTP checks use `verification_http.json`, captured by WebRaptor's httpx
+GET collector; TLS handshakes and validated-certificate checks use
+`verification_tls_probes.json` from Python ssl. Protocol/cipher and certificate
+signature checks cite endpoint-matched `verification_tls.xml` from sslscan. Selected
+curl/testssl/sslscan module outputs are linked as supplementary evidence when
+available. Supplementary output is not claimed to independently corroborate a
+finding; curl uses HEAD and may follow redirects, while the HTTP collector uses GET
+without redirects. Reused scanner evidence is explicitly labeled. Selected HTTP
+security headers and relevant TLS metadata are saved; response bodies, cookies and
+unrelated response headers are excluded from collector evidence artifacts.
+Remediation guidance is omitted from all findings for now.
+Wildcard and legacy-header observations are informational and do not automatically
+require removal. Guidance follows the
+[OWASP HTTP Headers Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html)
+and [OWASP TLS Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html);
+interpret findings in the application's context.
+Missing headers refer only to the exact requested URL's response, including its
+HTTP status; header presence does not prove browser enforcement or application-wide
+coverage. Known token values and HSTS max-age receive basic validation; HSTS
+max-age=0 is reported as disabled. Permissions-Policy currently receives a presence
+check, not a full structured-field/browser-feature validation. CSP report-only
+does not count as enforcement; meta policies in the captured HTML head are recognized.
+Static CSP warnings remain potential because policies intersect and browser behavior
+depends on context. Wildcards, repeated CSP policies and legacy headers are
+configuration observations, not automatically vulnerabilities. X-Frame-Options
+can still protect legacy clients; CSP frame-ancestors is the modern alternative.
+
+The HTTP collector uses GET, preserves duplicate response fields, follows no
+redirects, with a 2 MiB decoded-body limit per response and per-request timeouts.
+JavaScript-library checking and advisory downloads have been removed; script
+references are not fetched. It does not run a browser,
+execute JavaScript, follow HTML base URLs, inspect dynamic/inline scripts, or contact
+third-party script origins. Raw response bodies and authentication values are not
+saved. Cancellation stops collection between bounded requests. TLS checks use the
+original HTTPS hostname/port; explicit HTTP targets skip TLS/HSTS checks.
+Weak suites are parsed from endpoint-matched sslscan XML; missing/failed scans do
+not become clean results. TLS 1.3 uses a version-restricted handshake: a protocol-version
+rejection is evidence of rejection from this client, while timeouts and generic
+handshake failures are unknown. Wildcard detection requires a normally validated
+peer certificate, even when `--insecure` permits HTTP collection.
+
+Compression is reported as a potential BREACH prerequisite; secrets, reflected
+attacker input and a usable compression oracle require separate validation.
+Each target run includes `verification.json` and `verification.html`, with TLS
+evidence alongside them. The main `summary.json` embeds verification results and
+`report.html` links to the evidence. Verification status is also shown in progress. Exit code 1 means at least one
+check is unknown or an execution/input error occurred; 0 means all checks reached
+an assessment, **not that the target has no findings**. Interruption returns 130.
+Verification always runs during normal scans, including `--resume`; scanner
+outputs may be reused but verification is refreshed against the original target.
+Older v1 manifests remain supported; any retired JavaScript-advisory setting is ignored.
+Module selection/exclusion applies to the eight scanner modules; automatic
+verification independently uses sslscan when available, even if its standalone
+module is excluded. Its scanner shares the global `--threads` process budget and
+target workflows respect `--target-concurrency`. `--check-tools` remains a local
+dependency check and does not run verification. The former `--verify-findings`
+option is accepted as a hidden compatibility alias and is no longer needed.
+Verification needs Python dependencies from `requirements.txt` and sslscan for protocol/cipher/certificate checks,
+and is designed for Linux (including Kali/Parrot) and macOS without platform-specific
+paths.
 
 ## Scan behavior
 
@@ -162,6 +305,24 @@ Module statuses are `completed`, `failed`, `timed_out`, `cancelled`, `skipped`, 
 ```
 
 Tests use local dummy scanners, loopback HTTP, and mocks—not external targets. They cover execution, cleanup, concurrency, redaction, reports, normalization, banner preservation, tool checks, progress, and resume. Validate installed scanner compatibility in your authorized environment.
+
+For a native end-to-end check of all 22 finding checks and both report formats:
+
+```bash
+.venv/bin/python tests/local_findings_smoke.py
+```
+
+This requires `openssl`, `curl` and `sslscan`. It creates five temporary loopback
+HTTPS profiles with missing/invalid/duplicate headers, compressed responses,
+a trusted wildcard certificate, an expired SHA-1
+certificate, anonymous ciphers and TLS 1.0/1.1 enabled. It asserts every check's
+status/verification flag and compares every HTML result row and evidence field
+with JSON. SSLv2/SSLv3 are tested as disabled on these modern fixture servers;
+enabled cases have unit coverage. The fixture CA is passed only to the child
+process environment, never installed in the system trust store, and private keys
+are removed on completion. Saved reports and `validation.json` are retained under
+`results/local-validation/<timestamp>/`. Add `--serve` for a loopback report preview.
+No external target or advisory download is used.
 
 ## Responsible use and license
 

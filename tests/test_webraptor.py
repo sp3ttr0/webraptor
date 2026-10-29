@@ -15,7 +15,7 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import httpx
 
@@ -179,6 +179,11 @@ class IntegrationTests(unittest.TestCase):
         self.environment = patch.dict(os.environ, {'PATH': str(self.bin) + os.pathsep + os.environ['PATH'], 'WEBRAPTOR_TEST_MODE': 'success'})
         self.environment.start()
         self.addCleanup(self.environment.stop)
+        # Scanner workflow tests use dummy tools; automatic verification has its
+        # own real HTTP/TLS integration coverage in test_verification.py.
+        self.verifier = patch.object(w, 'verify_target', return_value={'status': 'completed', 'checks': []})
+        self.verification_mock = self.verifier.start()
+        self.addCleanup(self.verifier.stop)
         w.STOP.clear()
 
     def run_main(self, *extra):
@@ -289,7 +294,8 @@ class IntegrationTests(unittest.TestCase):
             stdout, stderr = proc.communicate(timeout=10)
             self.assertEqual(proc.returncode, 130, stdout + stderr)
             self.assertEqual(self.summaries()[0]['status'], 'cancelled')
-            self.assertTrue(all(m['status'] == 'cancelled' for m in self.summaries()[0]['modules']))
+            modules = self.summaries()[0]['modules']
+            self.assertTrue(all(m['status'] == 'cancelled' for m in modules), modules)
             self.assertEqual(len(events.read_text().splitlines()), 1)
         finally:
             if proc.poll() is None:
@@ -343,9 +349,15 @@ class IntegrationTests(unittest.TestCase):
 
     def test_resume_completed_does_not_require_tools_or_probe(self):
         self.assertEqual(self.run_main('--modules', 'curl', '--no-progress'), 0)
+        # Runs made before automatic verification have no advisory-file setting.
+        manifest = self.manifest()
+        data = json.loads(manifest.read_text())
+        data['settings']['js_advisories'] = '/retired/advisories.json'
+        manifest.write_text(json.dumps(data))
         with patch.object(w, 'tool_executable', return_value=None), patch.object(w, 'probe_target') as probe, contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(w.main(['--resume', str(self.manifest()), '--no-progress']), 0)
+            self.assertEqual(w.main(['--resume', str(manifest), '--no-progress']), 0)
         probe.assert_not_called()
+        self.assertEqual(self.verification_mock.call_count, 2)
 
     def test_resume_pending_target_from_manifest(self):
         self.assertEqual(self.run_main('--modules', 'curl', '--no-progress'), 0)
@@ -442,6 +454,26 @@ class IntegrationTests(unittest.TestCase):
         self.assertTrue(not state or state.startswith('Z'), state)
 
     def test_cancellation_and_no_launch_after_stop(self):
+        # Force the Darwin poll/killpg zombie race at each signaling stage.
+        for stage, signals, clock in (
+            ('term', [PermissionError(), ProcessLookupError()], [0]),
+            ('probe', [None, PermissionError(), ProcessLookupError()], [0, 0]),
+            ('kill', [None, PermissionError(), ProcessLookupError()], [0, 2]),
+        ):
+            proc = Mock(pid=12345)
+            proc.poll.return_value = -signal.SIGTERM
+            with self.subTest(stage=stage), patch.object(w.sys, 'platform', 'darwin'), patch.object(w.os, 'killpg', side_effect=signals), patch.object(w.time, 'monotonic', side_effect=clock):
+                w.terminate_group(proc)
+            self.assertEqual(proc.wait.call_count, 2)
+            proc.wait.assert_any_call(timeout=1.0)
+        for code in (None, -signal.SIGTERM):
+            proc = Mock(pid=12345)
+            proc.poll.return_value = code
+            if code is None:
+                proc.wait.side_effect = subprocess.TimeoutExpired('scanner', 1)
+            with patch.object(w.sys, 'platform', 'darwin'), patch.object(w.os, 'killpg', side_effect=PermissionError()):
+                with self.assertRaises(PermissionError):
+                    w.terminate_group(proc)
         stop = threading.Event()
         events = self.root / 'cancel-events'
         def cancel_when_running():
