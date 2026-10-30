@@ -1,0 +1,19 @@
+id: webraptor-local-demo
+info:
+  name: WebRaptor local fixture exposed backup
+  author: webraptor
+  severity: info
+  description: Detects the intentionally exposed backup marker on the local demo target.
+http:
+  - method: GET
+    path:
+      - '{{BaseURL}}/backup.txt'
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - WEBRAPTOR_LOCAL_DEMO_BACKUP
