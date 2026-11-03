@@ -57,6 +57,8 @@ python webraptor.py --help
 
 Header files contain one `Name: value` per line. Cookie files contain the cookie value only. Resupply credentials when resuming. Resume creates a new run and reuses eligible scanner outputs; verification always runs fresh.
 
+Scanner output streams live with tool-name prefixes and supplied-secret redaction. Interactive terminals show one compact updating status line; redirected logs show state changes without repeated timer lines. Use `--no-progress` to silence live output. Scanner-side buffering can delay some messages; complete output is saved with the reports.
+
 ## Reports
 
 Reports and raw evidence are saved under `results/`. Open a target's **`verification.html`** for collapsible scanner results, linked URLs, and verified findings. **`verification.json`** contains the complete check record. Batch reports are under `results/_runs/`.

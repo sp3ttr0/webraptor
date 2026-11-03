@@ -175,7 +175,7 @@ def parse_args(argv=None):
     parser.add_argument('--check-tools', action='store_true', help='Check versions and required CLI flags without scanning')
     parser.add_argument('--verify-findings', action='store_true', help=argparse.SUPPRESS)  # Legacy no-op; verification is automatic.
     parser.add_argument('--resume', help='Previous batch directory or run.json; writes a new run')
-    parser.add_argument('--no-progress', action='store_true', help='Disable live progress on stderr')
+    parser.add_argument('--no-progress', action='store_true', help='Disable live scanner output and progress on stderr')
     parser.add_argument('--output-dir', default='results')
     parser.add_argument('--modules', default=','.join(MODULES), help='Comma-separated module names')
     parser.add_argument('--exclude', action='append', default=[], help='Comma-separated modules to omit; repeatable, applied after --modules')
@@ -360,6 +360,18 @@ class Progress:
         self.started = time.monotonic()
         self.states = {(target_key(t), m): ('queued', self.started) for t, _ in targets for m in modules}
         self.worker = None
+        self.tty = sys.stderr.isatty()
+        self.last_counts = None
+        self.multiple = len(targets) > 1
+
+    def output(self, target, module, text):
+        if not self.enabled:
+            return
+        with self.lock:
+            label = module + (' ' + urlsplit(target).netloc if self.multiple else '')
+            if self.tty:
+                print('\r\033[2K', end='', file=sys.stderr)
+            print(f'[{label}] {text}', file=sys.stderr, flush=True)
 
     def update(self, target, module, status):
         if not self.enabled:
@@ -369,7 +381,10 @@ class Progress:
             old, since = self.states.get(key, ('queued', time.monotonic()))
             self.states[key] = (status, time.monotonic())
             elapsed = time.monotonic() - since if old == 'running' else 0
-            print(f'[{key[0]}] {module}: {status} ({elapsed:.1f}s)', file=sys.stderr, flush=True)
+            if self.tty:
+                print('\r\033[2K', end='', file=sys.stderr)
+            label = module + (' ' + urlsplit(target).netloc if self.multiple else '')
+            print(f'[{label}] {status} ({elapsed:.1f}s)', file=sys.stderr, flush=True)
 
     def render(self):
         if not self.enabled:
@@ -381,11 +396,16 @@ class Progress:
             for (target, module), (state, since) in self.states.items():
                 counts[state] = counts.get(state, 0) + 1
                 if state == 'running':
-                    running.append(f'{target}/{module} {now - since:.0f}s')
+                    running.append(f'{module} {now - since:.0f}s')
             line = f'[progress {now - self.started:.0f}s] ' + ', '.join(f'{k}={v}' for k, v in sorted(counts.items()))
             if running:
                 line += ' | ' + '; '.join(running)
-            print(line, file=sys.stderr, flush=True)
+            if self.tty:
+                width = max(1, shutil.get_terminal_size((80, 24)).columns - 1)
+                print('\r\033[2K' + line[:width], end='', file=sys.stderr, flush=True)
+            elif counts != self.last_counts:
+                print(line.split(' | ')[0], file=sys.stderr, flush=True)
+            self.last_counts = counts
 
     def __enter__(self):
         if self.enabled:
@@ -402,6 +422,8 @@ class Progress:
         if self.worker:
             self.worker.join()
         self.render()
+        if self.enabled and self.tty:
+            print(file=sys.stderr, flush=True)
 
 
 def probe_target(url, explicit, args, stop):
@@ -470,7 +492,7 @@ def copy_redacted(source, destination, redact):
             output.write(redact(line.decode('utf-8', errors='replace')))
 
 
-def run_command(cmd, stdout_path, stderr_path, timeout, stop, redact):
+def run_command(cmd, stdout_path, stderr_path, timeout, stop, redact, on_output=None):
     started = time.monotonic()
     result = {'status': 'cancelled', 'exit_code': None, 'duration_seconds': 0.0}
     if stop.is_set():
@@ -479,10 +501,41 @@ def run_command(cmd, stdout_path, stderr_path, timeout, stop, redact):
     # appearing in persistent console logs before redaction.
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         proc = None
+        offsets, pending, dropping = [0, 0], [b'', b''], [False, False]
+        def emit(data):
+            text = data.decode('utf-8', errors='replace')
+            text = re.sub(r'\x1b\][^\x07]*(?:\x07|\x1b\\)', '', text)
+            text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', text)
+            text = ''.join(c for c in text if c == '\t' or ord(c) >= 32 and ord(c) != 127)
+            if text.strip():
+                on_output(redact(text))
+        def stream_output(final=False):
+            if on_output is None:
+                return
+            for index, source in enumerate((out, err)):
+                # Independent offsets avoid disturbing the child's file writes.
+                while True:
+                    block = os.pread(source.fileno(), 65536, offsets[index])
+                    if not block:
+                        break
+                    offsets[index] += len(block)
+                    parts = re.split(rb'[\r\n]', pending[index] + block)
+                    pending[index] = parts.pop()
+                    for part in parts:
+                        if not dropping[index]:
+                            emit(part)
+                        dropping[index] = False
+                    # Never publish incomplete lines or a fragment of a secret.
+                    if len(pending[index]) > 65536:
+                        pending[index], dropping[index] = b'', True
+                if final and pending[index] and not dropping[index]:
+                    emit(pending[index])
+                    pending[index] = b''
         try:
             proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out,
                                     stderr=err, start_new_session=True)
             while True:
+                stream_output()
                 if stop.is_set():
                     result['status'] = 'cancelled'
                     terminate_group(proc)
@@ -503,6 +556,7 @@ def run_command(cmd, stdout_path, stderr_path, timeout, stop, redact):
         finally:
             if proc is not None and proc.poll() is None:
                 terminate_group(proc)
+            stream_output(final=True)
             copy_redacted(out, stdout_path, redact)
             copy_redacted(err, stderr_path, redact)
     result['duration_seconds'] = round(time.monotonic() - started, 3)
@@ -689,7 +743,8 @@ def execute_module(module, target, folder, args, slots, stop, redact, progress_t
         stderr = folder / (module + '_stderr.log')
         result['started_at'] = timestamp()
         result['authentication'] = 'not_applicable' if module in ('waybackurls', 'sslscan') else ('headers_supplied' if args.headers else 'none')
-        result.update(run_command(cmd, stdout, stderr, args.tool_timeout, stop, redact))
+        callback = (lambda text: progress.output(progress_target or target, module, text)) if progress and progress.enabled else None
+        result.update(run_command(cmd, stdout, stderr, args.tool_timeout, stop, redact, on_output=callback))
         redact_artifact(artifact, redact)
         if module == 'nuclei':
             result['findings'], result['findings_status'] = nuclei_findings(artifact, result['status'], redact)

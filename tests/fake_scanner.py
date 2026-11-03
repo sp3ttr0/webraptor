@@ -35,7 +35,9 @@ print('diagnostic ' + ' '.join(args), file=sys.stderr, flush=True)
 print('partial output', flush=True)
 if mode in ('hang', 'child'):
     if mode == 'child':
-        subprocess.Popen([sys.executable, __file__, '--fake-child', os.environ['WEBRAPTOR_TEST_CHILD_PID']])
+        child = subprocess.Popen([sys.executable, __file__, '--fake-child', os.environ['WEBRAPTOR_TEST_CHILD_PID']])
+        # Record the PID at spawn, independent of child interpreter startup time.
+        Path(os.environ['WEBRAPTOR_TEST_CHILD_PID']).write_text(str(child.pid))
     while True:
         time.sleep(.1)
 if mode == 'fail' or name == os.environ.get('WEBRAPTOR_TEST_FAIL_MODULE'):
