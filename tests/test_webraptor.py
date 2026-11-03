@@ -27,6 +27,42 @@ spec.loader.exec_module(w)
 
 
 class UnitTests(unittest.TestCase):
+    def test_dirsearch_format_compatibility(self):
+        self.assertEqual(w.dirsearch_format_flag('--format=FORMAT -o FILE'), '--format')
+        self.assertEqual(w.dirsearch_format_flag('--output-formats=FORMAT'), '--output-formats')
+        self.assertIsNone(w.dirsearch_format_flag('--formatting --output-formats-extra'))
+        def legacy_probe(cmd, out, err, *args):
+            out.write_text('--format=FORMAT' if cmd[-1] == '--help' else 'no such option')
+            err.write_text('')
+            return {'status': 'completed', 'exit_code': 0}
+        with patch.object(w, 'run_command', side_effect=legacy_probe):
+            self.assertEqual(w.installed_dirsearch_format(), '--format')
+            with tempfile.TemporaryDirectory() as temp:
+                args = w.parse_args(['https://localhost', '--modules', 'dirsearch'])
+                cmd, _ = w.build_command('dirsearch', 'https://localhost', Path(temp), args)
+                self.assertIn('--format', cmd)
+                self.assertNotIn('--output-formats', cmd)
+
+    def test_zero_exit_scanner_failures_are_incomplete(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            args = w.parse_args(['https://localhost', '--modules', 'whatweb,nuclei'])
+            def fake_run(cmd, out, err, *a, **kw):
+                out.write_text('ERROR Opening: https://localhost - execution expired\n' if cmd[0] == 'whatweb' else '')
+                err.write_text('[INF] Skipped localhost:443 from target list as found unresponsive permanently: i/o timeout\n' if cmd[0] == 'nuclei' else '')
+                if cmd[0] == 'nuclei':
+                    Path(cmd[cmd.index('-o') + 1]).write_text('')
+                return {'status': 'completed', 'exit_code': 0, 'duration_seconds': 0.1}
+            with patch.object(w, 'run_command', side_effect=fake_run):
+                for module in args.modules:
+                    result = w.execute_module(module, 'https://localhost', folder, args,
+                                              threading.BoundedSemaphore(1), threading.Event(), w.Redactor())
+                    self.assertEqual(result['status'], 'failed', result)
+                    self.assertEqual(result['findings_status'], 'partial')
+                    self.assertTrue(result['error'])
+            (folder / 'clean').write_text('Scan completed. 0 matches found.\n')
+            self.assertIsNone(w.scanner_failure('nuclei', [folder / 'clean']))
+
     def test_original_banner_is_unchanged(self):
         source = (ROOT / 'webraptor.py').read_text()
         node = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == 'print_banner')

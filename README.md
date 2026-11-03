@@ -57,7 +57,7 @@ python webraptor.py --help
 
 Header files contain one `Name: value` per line. Cookie files contain the cookie value only. Resupply credentials when resuming. Resume creates a new run and reuses eligible scanner outputs; verification always runs fresh.
 
-Scanner output streams live with supplied-secret redaction and no added per-line prefixes. Each tool has a clear start and finish message, with colors in interactive terminals. Use `--no-progress` to silence live output. Concurrent tools can interleave output; use `--threads 1` for sequential scanner output. Scanner-side buffering can delay messages; complete output is saved with the reports.
+Scanners run simultaneously by default (up to six; adjust with `--threads`). Interactive terminals show a cyan progress panel with colored tool states and elapsed times and scanner-reported percentages when available; other tools show a spinner. Raw output stays in the saved, redacted evidence logs. Redirected output shows status changes without terminal escape codes. The closing summary lists the outcome, elapsed time, report, evidence, logs, and resume manifest. Set `NO_COLOR=1` to disable terminal colors. Use `--no-progress` to silence progress.
 
 ## Reports
 

@@ -357,21 +357,41 @@ def reusable_results(target, args):
 
 
 class Progress:
-    def __init__(self, targets, modules, enabled=True, interval=2.0):
+    LABELS = {'whatweb': 'WhatWeb', 'nikto': 'Nikto', 'dirsearch': 'Dirsearch',
+              'nuclei': 'Nuclei', 'waybackurls': 'Waybackurls',
+              'verification': 'Finding Verification'}
+    OUTCOMES = {'completed': 'Finished', 'failed': 'Failed', 'timed_out': 'Timed Out',
+                'cancelled': 'Cancelled', 'skipped': 'Skipped', 'reused': 'Reused',
+                'not_applicable': 'Not Applicable', 'queued': 'Queued', 'running': 'Running'}
+
+    def __init__(self, targets, modules, enabled=True, interval=.2):
         self.enabled, self.interval = enabled, interval
         self.lock, self.finished = threading.Lock(), threading.Event()
         self.started = time.monotonic()
         self.states = {(target_key(t), m): ('queued', self.started) for t, _ in targets for m in modules}
+        self.labels = {target_key(t): urlsplit(t).netloc for t, _ in targets}
+        self.elapsed, self.percentages = {}, {}
         self.worker = None
-        self.tty = sys.stderr.isatty()
-        self.last_counts = None
+        self.tty = sys.stderr.isatty() and os.environ.get('TERM') != 'dumb'
+        self.color = self.tty and 'NO_COLOR' not in os.environ
+        self.lines = 0
         self.multiple = len(targets) > 1
 
     def output(self, target, module, text):
+        # Raw output is already redacted and saved by run_command. Consume only
+        # recognized scanner progress fields, never arbitrary percentages in findings.
         if not self.enabled:
             return
-        with self.lock:
-            print(text, file=sys.stderr, flush=True)
+        match = None
+        if module == 'dirsearch':
+            match = re.search(r'^\s*(?:\[[# \-]*\]\s*)?(\d{1,3}(?:\.\d+)?)%\s+\d+\s*/\s*\d+', text)
+        elif module == 'nuclei':
+            match = re.search(r'\[\d+:\d+:\d+\].*?Requests:\s*\d+/\d+\s*\((\d{1,3}(?:\.\d+)?)%\)', text, re.I)
+        if match and 0 <= float(match[1]) <= 100:
+            with self.lock:
+                key = (target_key(target), module)
+                if self.states.get(key, (None,))[0] == 'running':
+                    self.percentages[key] = float(match[1])
 
     def update(self, target, module, status):
         if not self.enabled:
@@ -379,33 +399,129 @@ class Progress:
         with self.lock:
             key = (target_key(target), module)
             old, since = self.states.get(key, ('queued', time.monotonic()))
-            self.states[key] = (status, time.monotonic())
-            elapsed = time.monotonic() - since if old == 'running' else 0
-            label = {'whatweb': 'WhatWeb', 'nikto': 'Nikto', 'dirsearch': 'Dirsearch',
-                     'nuclei': 'Nuclei', 'waybackurls': 'Waybackurls',
-                     'verification': 'Finding Verification'}.get(module, module)
-            if self.multiple:
-                label += ' (' + urlsplit(target).netloc + ')'
+            if old == status:
+                return
+            now = time.monotonic()
+            self.states[key] = (status, now)
+            self.elapsed[key] = now - since if old == 'running' else 0
             if status == 'running':
-                message, color = f'Running {label}', Fore.CYAN
-            else:
-                outcome = {'completed': 'Finished', 'failed': 'Failed', 'timed_out': 'Timed Out',
-                           'cancelled': 'Cancelled', 'skipped': 'Skipped',
-                           'not_applicable': 'Not Applicable'}.get(status, status)
-                message = f'{label}: {outcome} ({elapsed:.1f}s)'
-                color = Fore.GREEN if status == 'completed' else Fore.YELLOW
-            print((color if self.tty else '') + message + (Style.RESET_ALL if self.tty else ''),
-                  file=sys.stderr, flush=True)
+                self.percentages.pop(key, None)
+            if not self.tty:
+                label = self.LABELS.get(module, module)
+                if self.multiple:
+                    label += ' (' + self.labels.get(key[0], '') + ')'
+                message = f'Running {label}' if status == 'running' else f'{label}: {self.OUTCOMES.get(status, status)} ({self.elapsed[key]:.1f}s)'
+                print(message, file=sys.stderr, flush=True)
 
     def render(self):
-        # Tool lifecycle messages replace the former periodic progress summaries.
-        return
+        if not self.enabled or not self.tty:
+            return
+        with self.lock:
+            width, height = shutil.get_terminal_size((80, 24))
+            width = max(1, width - 1)  # Avoid autowrap at the last terminal column.
+            now = time.monotonic()
+            rows, counts = [], {}
+            spinner = '|/-\\'[int((now - self.started) * 5) % 4]
+            for key, (status, since) in self.states.items():
+                counts[status] = counts.get(status, 0) + 1
+                label = self.LABELS.get(key[1], key[1])
+                if self.multiple:
+                    label = self.labels.get(key[0], '') + ' / ' + label
+                elapsed = now - since if status == 'running' else self.elapsed.get(key, 0)
+                state = self.OUTCOMES.get(status, status)
+                symbol = spinner if status == 'running' else '+' if status in ('completed', 'reused') else '!' if status in ('failed', 'timed_out') else '-'
+                percentage = self.percentages.get(key) if status == 'running' else None
+                bar = ''
+                if percentage is not None:
+                    filled = int(percentage / 10)
+                    bar = '[' + '#' * filled + '-' * (10 - filled) + f'] {percentage:g}% '
+                rows.append((status, f'{label:<22} {symbol} {state:<14} {bar}{elapsed:.0f}s'))
+            capacity = max(1, height - 6)
+            # Keep active tasks visible when a batch exceeds the terminal height.
+            if len(rows) > capacity:
+                rows.sort(key=lambda row: row[0] != 'running')
+            inner = max(0, width - 4)
+            def framed(text):
+                if width < 8:
+                    return text[:width]
+                return '│ ' + text[:inner].ljust(inner) + ' │'
+            def edge(title, left, right):
+                if width < 8:
+                    return title[:width]
+                return left + ('─ ' + title + ' ').ljust(width - 2, '─')[:width - 2] + right
+            visible = [(edge('WEBRAPTOR · SCANNER PROGRESS', '┌', '┐'), Fore.CYAN)]
+            colors = {'running': Fore.CYAN, 'completed': Fore.GREEN, 'reused': Fore.GREEN,
+                      'failed': Fore.RED, 'timed_out': Fore.RED, 'cancelled': Fore.YELLOW,
+                      'skipped': Fore.YELLOW, 'not_applicable': Fore.YELLOW}
+            visible += [(framed(text), colors.get(status, Style.DIM)) for status, text in rows[:capacity]]
+            if len(rows) > capacity:
+                visible.append((framed(f'... {len(rows) - capacity} more tasks'), Style.DIM))
+            done = counts.get('completed', 0) + counts.get('reused', 0)
+            failed = counts.get('failed', 0) + counts.get('timed_out', 0)
+            visible.append((framed(f'Finished {done}/{len(rows)} | Running {counts.get("running", 0)} | Failed {failed} | Queued {counts.get("queued", 0)}'), Fore.CYAN))
+            visible.append((edge('Hunt Smarter, Not Harder', '└', '┘'), Fore.CYAN))
+            if self.lines:
+                sys.stderr.write(f'\x1b[{self.lines}A')
+            for i in range(max(self.lines, len(visible))):
+                text, color = visible[i] if i < len(visible) else ('', '')
+                styled = color + text + Style.RESET_ALL if self.color else text
+                sys.stderr.write('\r\x1b[2K' + styled + '\n')
+            extra = max(0, self.lines - len(visible))
+            if extra:
+                sys.stderr.write(f'\x1b[{extra}A')
+            self.lines = len(visible)
+            sys.stderr.flush()
 
     def __enter__(self):
+        if self.enabled and self.tty:
+            self.render()
+            def refresh():
+                while not self.finished.wait(self.interval):
+                    self.render()
+            self.worker = threading.Thread(target=refresh, daemon=True)
+            self.worker.start()
         return self
 
     def __exit__(self, *exc):
         self.finished.set()
+        if self.worker:
+            self.worker.join()
+        self.render()
+
+
+def print_completion(results, batch_folder, elapsed, cancelled=False):
+    """Close with outcome and artifact locations, without implying full coverage on failures."""
+    color = sys.stdout.isatty() and os.environ.get('TERM') != 'dumb' and 'NO_COLOR' not in os.environ
+    complete = sum(result['status'] == 'completed' for result in results)
+    if cancelled:
+        title, tone = 'Scan cancelled · partial results saved', Fore.YELLOW
+    elif complete == len(results):
+        title, tone = 'Scan complete · reports ready', Fore.GREEN
+    else:
+        title, tone = 'Scan incomplete · review scanner errors in the logs', Fore.YELLOW
+    width = min(76, max(1, shutil.get_terminal_size((80, 24)).columns - 1))
+    def emit(text, shade=''):
+        print(shade + text + Style.RESET_ALL if color and shade else text)
+    emit('')
+    emit('─' * width, Fore.CYAN)
+    emit('  WEBRAPTOR  /  ' + title, tone)
+    emit(f'  Targets completed: {complete}/{len(results)}  ·  Elapsed: {elapsed:.1f}s')
+    emit('─' * width, Fore.CYAN)
+    for result in results:
+        folder = Path(result['run_directory'])
+        emit('  Report', Fore.CYAN)
+        emit('    ' + str(folder / 'report.html'))
+        emit('  Evidence & logs', Fore.CYAN)
+        emit('    ' + str(folder / 'evidence'))
+        emit('    ' + str(folder / 'logs'))
+    if len(results) > 1:
+        emit('  Batch report', Fore.CYAN)
+        emit('    ' + str(batch_folder / 'report.html'))
+    emit('  Resume manifest', Fore.CYAN)
+    emit('    ' + str(batch_folder / 'run.json'))
+    emit('')
+    emit('  Hunt Smarter, Not Harder.', Fore.CYAN)
+    emit('')
 
 
 def probe_target(url, explicit, args, stop):
@@ -557,8 +673,8 @@ TOOL_CHECKS = {
     'whatweb': (['--version'], ['--help'], ['--color', '--max-threads', '--wait', '--follow-redirect', '-v']),
     'nikto': (['-Version'], ['-Help'], ['-Cgidirs', '-host', '-Pause', '-ask', '-nointeractive']),
     'waybackurls': (None, ['-h'], ['-dates', '-no-subs']),
-    'dirsearch': (['--version'], ['--help-all'], ['-u', '-e', '--random-agent', '-t', '--max-rate', '--output-formats', '-o']),
-    'nuclei': (['-version'], ['-h'], ['-u', '-jsonl', '-omit-raw', '-no-color', '-disable-redirects', '-rate-limit', '-o']),
+    'dirsearch': (['--version'], ['--help-all'], ['-u', '-e', '--random-agent', '-t', '--max-rate', '-o']),
+    'nuclei': (['-version'], ['-h'], ['-u', '-jsonl', '-omit-raw', '-no-color', '-disable-redirects', '-stats', '-rate-limit', '-o']),
     'testssl': (['--version'], ['--help'], ['--quiet', '--color', '--warnings']),
     'sslscan': (['--version'], ['--help'], ['--no-colour']),
 }
@@ -594,6 +710,8 @@ def check_tools(args):
             # Released dirsearch versions may expose their full CLI through --help.
             if module == 'dirsearch' and help_result['status'] == 'failed':
                 help_result, help_text = probe(['--help'])
+            if module == 'dirsearch' and not dirsearch_format_flag(help_text):
+                flags.append('--format or --output-formats')
             missing = [flag for flag in flags if not re.search(r'(?<![\w-])' + re.escape(flag) + r'(?![\w-])', help_text)]
             version = 'not exposed by upstream; executable SHA256 ' + file_digest(Path(executable))[:16]
             version_ok = True
@@ -622,6 +740,42 @@ def tls_endpoint(target):
     return host + ':' + str(parsed.port or 443)
 
 
+def dirsearch_format_flag(help_text):
+    """Select the report option advertised by the installed release."""
+    for flag in ('--output-formats', '--format'):
+        if re.search(r'(?<![\w-])' + re.escape(flag) + r'(?![\w-])', help_text):
+            return flag
+    return None
+
+
+def installed_dirsearch_format():
+    executable = tool_executable('dirsearch') or 'dirsearch'
+    with tempfile.TemporaryDirectory(prefix='webraptor-dirsearch-') as temp:
+        folder = Path(temp)
+        for option in ('--help-all', '--help'):
+            run_command([executable, option], folder / 'out', folder / 'err',
+                        10, threading.Event(), Redactor())
+            text = ''.join(p.read_text() for p in (folder / 'out', folder / 'err') if p.exists())
+            flag = dirsearch_format_flag(text)
+            if flag:
+                return flag
+    raise RuntimeError('Dirsearch does not advertise a supported report format option; run --check-tools')
+
+
+def scanner_failure(module, paths):
+    """Some scanners return zero even when they could not assess the target."""
+    for path in paths:
+        if not path.exists():
+            continue
+        with path.open(encoding='utf-8', errors='replace') as source:
+            for line in source:
+                if module == 'whatweb' and re.search(r'^\s*ERROR Opening:', line):
+                    return 'WhatWeb could not open the target; see scanner evidence for the connection error'
+                if module == 'nuclei' and re.search(r'Skipped .+ from target list as found unresponsive permanently', line, re.I):
+                    return 'Nuclei skipped an unresponsive target; scan coverage is incomplete'
+    return None
+
+
 def build_command(module, target, folder, args):
     """Tool outputs are relative to the target run, with separate console logs."""
     artifact = folder / (module + '_results.txt')
@@ -645,13 +799,13 @@ def build_command(module, target, folder, args):
         artifact = folder / 'dirsearch_results' / 'results.txt'
         cmd = ['dirsearch', '-u', target, '-e', 'php,asp,aspx,jsp,html,js,json',
                '--random-agent', '-t', str(args.dirsearch_threads),
-               '--max-rate', str(args.dirsearch_rate), '--output-formats', 'plain', '-o', str(artifact)]
+               '--max-rate', str(args.dirsearch_rate), installed_dirsearch_format(), 'plain', '-o', str(artifact)]
         if args.wordlist:
             cmd += ['-w', args.wordlist]
     else:
         artifact = folder / 'nuclei_results.jsonl'
         cmd = ['nuclei', '-u', target, '-jsonl', '-omit-raw', '-no-color',
-               '-disable-redirects', '-rate-limit', str(args.nuclei_rate), '-o', str(artifact)]
+               '-disable-redirects', '-stats', '-rate-limit', str(args.nuclei_rate), '-o', str(artifact)]
         if args.nuclei_template:
             cmd += ['-t', args.nuclei_template]
     if module in AUTH_MODULES:
@@ -714,12 +868,14 @@ def execute_module(module, target, folder, args, slots, stop, redact, progress_t
             break
     else:
         return result
+    progress = getattr(args, 'progress', None)
+    announced = False
     try:
         if stop.is_set():
             return result
-        progress = getattr(args, 'progress', None)
         if progress:
             progress.update(progress_target or target, module, 'running')
+            announced = True
         cmd, artifact = build_command(module, target, folder, args)
         stdout = artifact if module in ('curl', 'whatweb', 'nikto', 'waybackurls', 'testssl', 'sslscan') else folder / (module + '_stdout.log')
         stderr = folder / (module + '_stderr.log')
@@ -728,6 +884,9 @@ def execute_module(module, target, folder, args, slots, stop, redact, progress_t
         callback = (lambda text: progress.output(progress_target or target, module, text)) if progress and progress.enabled else None
         result.update(run_command(cmd, stdout, stderr, args.tool_timeout, stop, redact, on_output=callback))
         redact_artifact(artifact, redact)
+        failure = scanner_failure(module, (stdout, stderr))
+        if failure and result['status'] == 'completed':
+            result.update(status='failed', error=failure, findings_status='partial')
         if module == 'nuclei':
             result['findings'], result['findings_status'] = nuclei_findings(artifact, result['status'], redact)
             if result['status'] == 'completed' and result['findings_status'] != 'complete':
@@ -742,6 +901,9 @@ def execute_module(module, target, folder, args, slots, stop, redact, progress_t
         result.update(status='failed', error=type(exc).__name__)
         return result
     finally:
+        if announced:
+            progress.update(progress_target or target, module, result['status'])
+            result['_progress_reported'] = True
         slots.release()
 
 
@@ -843,7 +1005,8 @@ def scan_target(target, explicit, args, batch_id, slots, stop, redact):
                 for future in as_completed(jobs):
                     result = future.result()
                     summary['modules'].append(result)
-                    if getattr(args, 'progress', None):
+                    reported = result.pop('_progress_reported', False)
+                    if getattr(args, 'progress', None) and not reported:
                         args.progress.update(target, result['module'], result['status'])
                     record(result['module'] + ': ' + result['status'])
                     write_json(folder / 'summary.json', summary)
@@ -875,7 +1038,6 @@ def scan_target(target, explicit, args, batch_id, slots, stop, redact):
     write_json(folder / 'summary.json', summary)
     from output_layout import organize_output
     summary = organize_output(folder, summary)
-    print('[' + summary['status'] + '] Report: ' + str(folder / 'report.html'))
     return summary
 
 
@@ -932,7 +1094,7 @@ def main(argv=None):
             for future in as_completed(futures):
                 results.append(future.result())
                 write_batch(batch_folder, batch_id, results)
-        print('Batch report: ' + str(batch_folder / 'report.html'))
+        print_completion(results, batch_folder, time.monotonic() - progress.started, STOP.is_set())
         return 130 if STOP.is_set() else (0 if all(r['status'] == 'completed' for r in results) else 1)
     except OSError as exc:
         print('Output/process error: ' + type(exc).__name__, file=sys.stderr)
