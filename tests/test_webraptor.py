@@ -57,9 +57,9 @@ class UnitTests(unittest.TestCase):
             progress.render()
             progress.update(target, 'curl', 'completed')
         text = stream.getvalue()
-        self.assertIn('queued=1', text)
-        self.assertIn('running=1', text)
-        self.assertIn('completed=1', text)
+        self.assertIn('Running curl', text)
+        self.assertIn('curl: Finished', text)
+        self.assertNotIn('[progress', text)
         self.assertNotIn('secret-token', text)
         quiet = io.StringIO()
         with contextlib.redirect_stderr(quiet), w.Progress([(target, True)], ['curl'], enabled=False) as progress:
@@ -191,7 +191,7 @@ class IntegrationTests(unittest.TestCase):
             return w.main(['https://example.com', '--output-dir', str(self.root / 'results'), *extra])
 
     def summaries(self):
-        return [json.loads(p.read_text()) for p in (self.root / 'results').glob('*/2*/summary.json') if p.parent.parent.name != '_runs']
+        return [json.loads(p.read_text()) for p in (self.root / 'results').glob('*/2*/data/summary.json') if p.parent.parent.name != '_runs']
 
 
     def start_http_fixture(self):
@@ -324,7 +324,7 @@ class IntegrationTests(unittest.TestCase):
         with patch.dict(os.environ, {'WEBRAPTOR_TEST_FAIL_MODULE': 'nikto'}):
             self.assertEqual(self.run_main('--modules', 'curl,nikto', '--no-progress'), 1)
         old = self.summaries()[0]
-        original = Path(old['run_directory']) / 'curl_results.txt'
+        original = Path(old['run_directory']) / next(m['artifacts'][0] for m in old['modules'] if m['module']=='curl')
         before = original.read_bytes()
         manifest = self.manifest()
         with patch.dict(os.environ, {'WEBRAPTOR_TEST_EVENTS': str(events)}):
@@ -342,7 +342,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertNotIn('private-resume-token', manifest.read_text())
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             w.parse_args(['--resume', str(manifest)])
-        (Path(self.summaries()[0]['run_directory']) / 'curl_results.txt').write_text('modified')
+        (Path(self.summaries()[0]['run_directory']) / self.summaries()[0]['modules'][0]['artifacts'][0]).write_text('modified')
         self.assertEqual(self.resume(manifest, '-H', 'Authorization: Bearer new-session-token'), 0)
         latest = sorted(self.summaries(), key=lambda r: r['started_at'])[-1]
         self.assertNotIn('reused_from', latest['modules'][0])
@@ -393,8 +393,8 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(summary['probe']['status'], 'not_required')
         for module in summary['modules']:
             self.assertEqual(module['status'], 'completed')
-            self.assertIn(module['module'] + '_results.txt', module['artifacts'])
-            log = (Path(summary['run_directory']) / (module['module'] + '_stderr.log')).read_text()
+            self.assertIn('evidence/scanners/' + module['module'] + '_results.txt', module['artifacts'])
+            log = (Path(summary['run_directory']) / ('logs/' + module['module'] + '_stderr.log')).read_text()
             self.assertIn('example.com:8443', log)
             self.assertNotIn('/path', log)
             self.assertNotIn('tls-secret-token', log)
@@ -429,7 +429,7 @@ class IntegrationTests(unittest.TestCase):
         module = self.summaries()[0]['modules'][0]
         self.assertEqual(module['exit_code'], 7)
         self.assertEqual(module['status'], 'failed')
-        log = Path(self.summaries()[0]['run_directory']) / 'whatweb_stderr.log'
+        log = Path(self.summaries()[0]['run_directory']) / 'logs/whatweb_stderr.log'
         self.assertIn('diagnostic', log.read_text())
 
     def test_authenticated_logs_redacted(self):
@@ -444,7 +444,7 @@ class IntegrationTests(unittest.TestCase):
         pidfile = self.root / 'child.pid'
         stop = threading.Event()
         with patch.dict(os.environ, {'WEBRAPTOR_TEST_MODE': 'child', 'WEBRAPTOR_TEST_CHILD_PID': str(pidfile)}):
-            result = w.run_command([str(self.bin / 'whatweb')], self.root / 'out', self.root / 'err', .5, stop, w.Redactor())
+            result = w.run_command([str(self.bin / 'whatweb')], self.root / 'out', self.root / 'err', 2, stop, w.Redactor())
         self.assertEqual(result['status'], 'timed_out')
         self.assertIn('partial output', (self.root / 'out').read_text())
         self.assertTrue(pidfile.exists())

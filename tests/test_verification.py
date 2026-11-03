@@ -417,11 +417,11 @@ class CollectionTests(unittest.TestCase):
                 self.assertEqual(len(report['checks']), 22)
                 self.assertEqual(report['checks'][0]['status'], 'not_applicable')
                 self.assertEqual(report['checks'][1]['status'], 'found')
-                self.assertTrue(paths[0].with_name('report.html').exists())
+                self.assertTrue((paths[0].parent.parent / 'report.html').exists())
                 summary = json.loads(paths[0].with_name('summary.json').read_text())
                 self.assertEqual(len(summary['verification']['checks']), 22)
                 self.assertNotIn('Vulnerable Javascript Libraries', {c['check'] for c in report['checks']})
-                manifest = Path(temp) / '_runs' / paths[0].parent.name / 'run.json'
+                manifest = Path(temp) / '_runs' / paths[0].parent.parent.name / 'run.json'
                 with patch.object(w, 'tool_executable', side_effect=AssertionError('Completed scanner is reusable')), patch.object(v, 'collect_http', return_value=dict(target=report['target'], headers=[], error='ConnectError')):
                     self.assertEqual(w.main(['--resume', str(manifest), '--no-progress']), 1)
                 resumed = next(path for path in Path(temp).rglob('verification.json') if path != paths[0])

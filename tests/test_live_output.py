@@ -53,7 +53,10 @@ class LiveOutputTests(unittest.TestCase):
                 progress.render();first=stream.getvalue();progress.render()
                 if not stream.isatty(): self.assertEqual(first,stream.getvalue())
                 progress.output('https://example.com','nikto','observed header')
-            self.assertIn('[nikto] observed header',stream.getvalue())
+            self.assertIn('observed header',stream.getvalue())
+            self.assertNotIn('[nikto]',stream.getvalue())
+            self.assertIn('Running Nikto',stream.getvalue())
+            self.assertNotIn('[progress',stream.getvalue())
             self.assertNotIn('private',stream.getvalue())
             if stream.isatty():
                 for line in stream.getvalue().split('\r'):

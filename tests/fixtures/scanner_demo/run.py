@@ -35,7 +35,7 @@ with ThreadingHTTPServer(('127.0.0.1', 0), Target) as server:
     print('LOCAL_TARGET=' + url, flush=True)
     try:
         result = subprocess.run([sys.executable, str(ROOT/'webraptor.py'), url,
-            '--modules', 'whatweb,nikto,waybackurls,dirsearch,nuclei', '--no-progress',
+            '--modules', 'whatweb,nikto,waybackurls,dirsearch,nuclei',
             '--tool-timeout', '180', '--nikto-pause', '0.001', '--dirsearch-rate', '30',
             '--wordlist', str(Path(__file__).with_name('paths.txt')),
             '--nuclei-template', str(Path(__file__).with_name('nuclei.yaml')),

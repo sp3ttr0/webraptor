@@ -325,7 +325,10 @@ def reusable_results(target, args):
     data = args.resume_data
     folder = data['base'] / target_key(target) / data['run_id']
     try:
-        summary = json.loads((folder / 'summary.json').read_text(encoding='utf-8'))
+        summary_path = folder / 'data' / 'summary.json'
+        if not summary_path.exists():
+            summary_path = folder / 'summary.json'  # Pre-layout runs remain resumable.
+        summary = json.loads(summary_path.read_text(encoding='utf-8'))
         if summary['target'] != target:
             return {}
         reusable = {}
@@ -368,10 +371,7 @@ class Progress:
         if not self.enabled:
             return
         with self.lock:
-            label = module + (' ' + urlsplit(target).netloc if self.multiple else '')
-            if self.tty:
-                print('\r\033[2K', end='', file=sys.stderr)
-            print(f'[{label}] {text}', file=sys.stderr, flush=True)
+            print(text, file=sys.stderr, flush=True)
 
     def update(self, target, module, status):
         if not self.enabled:
@@ -381,49 +381,31 @@ class Progress:
             old, since = self.states.get(key, ('queued', time.monotonic()))
             self.states[key] = (status, time.monotonic())
             elapsed = time.monotonic() - since if old == 'running' else 0
-            if self.tty:
-                print('\r\033[2K', end='', file=sys.stderr)
-            label = module + (' ' + urlsplit(target).netloc if self.multiple else '')
-            print(f'[{label}] {status} ({elapsed:.1f}s)', file=sys.stderr, flush=True)
+            label = {'whatweb': 'WhatWeb', 'nikto': 'Nikto', 'dirsearch': 'Dirsearch',
+                     'nuclei': 'Nuclei', 'waybackurls': 'Waybackurls',
+                     'verification': 'Finding Verification'}.get(module, module)
+            if self.multiple:
+                label += ' (' + urlsplit(target).netloc + ')'
+            if status == 'running':
+                message, color = f'Running {label}', Fore.CYAN
+            else:
+                outcome = {'completed': 'Finished', 'failed': 'Failed', 'timed_out': 'Timed Out',
+                           'cancelled': 'Cancelled', 'skipped': 'Skipped',
+                           'not_applicable': 'Not Applicable'}.get(status, status)
+                message = f'{label}: {outcome} ({elapsed:.1f}s)'
+                color = Fore.GREEN if status == 'completed' else Fore.YELLOW
+            print((color if self.tty else '') + message + (Style.RESET_ALL if self.tty else ''),
+                  file=sys.stderr, flush=True)
 
     def render(self):
-        if not self.enabled:
-            return
-        with self.lock:
-            counts = {}
-            running = []
-            now = time.monotonic()
-            for (target, module), (state, since) in self.states.items():
-                counts[state] = counts.get(state, 0) + 1
-                if state == 'running':
-                    running.append(f'{module} {now - since:.0f}s')
-            line = f'[progress {now - self.started:.0f}s] ' + ', '.join(f'{k}={v}' for k, v in sorted(counts.items()))
-            if running:
-                line += ' | ' + '; '.join(running)
-            if self.tty:
-                width = max(1, shutil.get_terminal_size((80, 24)).columns - 1)
-                print('\r\033[2K' + line[:width], end='', file=sys.stderr, flush=True)
-            elif counts != self.last_counts:
-                print(line.split(' | ')[0], file=sys.stderr, flush=True)
-            self.last_counts = counts
+        # Tool lifecycle messages replace the former periodic progress summaries.
+        return
 
     def __enter__(self):
-        if self.enabled:
-            self.render()
-            def monitor():
-                while not self.finished.wait(self.interval):
-                    self.render()
-            self.worker = threading.Thread(target=monitor, daemon=True)
-            self.worker.start()
         return self
 
     def __exit__(self, *exc):
         self.finished.set()
-        if self.worker:
-            self.worker.join()
-        self.render()
-        if self.enabled and self.tty:
-            print(file=sys.stderr, flush=True)
 
 
 def probe_target(url, explicit, args, stop):
@@ -784,7 +766,7 @@ def report_html(summary):
                 for key, label in (('template_id', 'Template'), ('name', 'Name'), ('matched_at', 'Location'))) + '</tr>')
     verification = summary.get('verification', {})
     verification_html = ('<h2>Finding verification</h2><p>Status: ' + esc(verification.get('status', 'unavailable')) +
-                         ' · <a href="verification.html">Verified findings and cited evidence</a> · '
+                         ' · <a href="report.html">Verified findings and cited evidence</a> · '
                          '<a href="verification.json">JSON</a></p>') if verification else ''
     body = '<p>Status: <strong>' + esc(summary['status']) + '</strong> · Started: ' + esc(summary['started_at']) + '</p>' + verification_html
     body += '<h2>Scanner modules and source artifacts</h2><div class="panel"><table><thead><tr><th>Module</th><th>Status</th><th>Seconds</th><th>Findings</th><th>Details</th><th>Tool evidence</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>'
@@ -876,7 +858,7 @@ def scan_target(target, explicit, args, batch_id, slots, stop, redact):
                 verification = {'target': redact(target), 'status': 'failed',
                                 'checks': [enrich_finding(check({'target': target, 'headers': [], 'error': type(exc).__name__})) for check in CHECKS]}
                 write_json(folder / 'verification.json', verification)
-                (folder / 'verification.html').write_text(render_report(verification), encoding='utf-8')
+                (folder / 'report.html').write_text(render_report(verification), encoding='utf-8')
                 summary['verification'] = verification
             record('Finding verification ' + summary['verification']['status'])
             if getattr(args, 'progress', None):
@@ -891,7 +873,8 @@ def scan_target(target, explicit, args, batch_id, slots, stop, redact):
         summary['finished_at'] = timestamp()
         record('Workflow ' + summary['status'])
     write_json(folder / 'summary.json', summary)
-    (folder / 'report.html').write_text(report_html(summary), encoding='utf-8')
+    from output_layout import organize_output
+    summary = organize_output(folder, summary)
     print('[' + summary['status'] + '] Report: ' + str(folder / 'report.html'))
     return summary
 

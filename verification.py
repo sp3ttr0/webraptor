@@ -615,5 +615,5 @@ def assess_target(target, args, folder, stop, run_command, redact, modules=()):
                         'incomplete' if any(c['status'] == 'unknown' for c in report['checks']) else 'completed')
     report = redact_tree(report, redact)
     (folder / 'verification.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
-    (folder / 'verification.html').write_text(render_report(report), encoding='utf-8')
+    (folder / 'report.html').write_text(render_report(report), encoding='utf-8')
     return report

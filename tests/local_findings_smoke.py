@@ -202,7 +202,7 @@ def validate(report, profile, folder):
         if any(check.get(key) != value for key, value in desired.items()):
             errors.append(name + ': expected ' + str(desired) + ', got ' + str({k: check.get(k) for k in desired}))
     parser = Rows()
-    markup = (folder / 'verification.html').read_text()
+    markup = (folder / 'report.html').read_text()
     parser.feed(markup)
     visible = [c for c in report['checks'] if c['status'] == 'found' and c['verified'] is True]
     if len(parser.rows) != len(visible):
@@ -228,11 +228,11 @@ def validate(report, profile, folder):
                 errors.append('Evidence hash mismatch: ' + check['check'])
         if 'remediation' in check or len(row) != 3:
             errors.append('Unexpected remediation or extra result column: ' + check['check'])
-    summary = json.loads((folder / 'summary.json').read_text())
+    summary = json.loads((folder / 'data/summary.json').read_text())
     if summary['verification'] != report:
         errors.append('Embedded summary differs from verification.json')
-    if 'verification.html' not in (folder / 'report.html').read_text():
-        errors.append('Main report has no verification link')
+    if (folder / 'verification.html').exists():
+        errors.append('Unexpected duplicate target report')
     if markup.count('<script>') != 1:
         errors.append('Expected only the trusted theme script')
     if 'Disclaimer' not in markup or 'themeToggle' not in markup:
@@ -272,7 +272,7 @@ def main():
                     print(run.stdout[-1000:], run.stderr[-1000:], flush=True)
                     continue
                 report = json.loads(paths[0].read_text())
-                errors = validate(report, profile, paths[0].parent)
+                errors = validate(report, profile, paths[0].parent.parent)
                 expected_exit = 1 if profile == 'expired' else 0
                 if run.returncode != expected_exit:
                     errors.append('Expected CLI exit ' + str(expected_exit) + ', got ' + str(run.returncode))
@@ -295,7 +295,7 @@ def main():
     ])
     (output / 'validation.json').write_text(json.dumps(manifest, indent=2))
     items = ''.join('<li>' + html.escape(o['profile']) + ': ' + ('PASS' if not o['errors'] else 'FAIL') +
-                    ' <a href="' + html.escape(o.get('report', '').replace('verification.json', 'verification.html')) + '">HTML</a>' +
+                    ' <a href="' + html.escape(o.get('report', '').replace('data/verification.json', 'report.html')) + '">HTML</a>' +
                     ' <a href="' + html.escape(o.get('report', '')) + '">JSON</a></li>' for o in outcomes)
     (output / 'index.html').write_text('<!doctype html><html><meta charset="utf-8"><title>WebRaptor local validation</title>'
         '<h1>Local fixture validation: ' + ('PASS' if passed else 'FAIL') + '</h1><p>Five loopback profiles; 22 checks per profile.</p><ul>' + items + '</ul></html>')
