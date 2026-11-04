@@ -339,7 +339,9 @@ class IntegrationTests(unittest.TestCase):
                 proc.communicate()
 
     def manifest(self):
-        return sorted((self.root / 'results' / '_runs').glob('*/run.json'))[-1]
+        root = self.root/'results'
+        paths = list(root.glob('_runs/*/run.json')) + list(root.glob('*/2*/data/run.json'))
+        return max(paths, key=lambda p: json.loads(p.read_text())['run_id'])
 
     def resume(self, manifest, *extra):
         with patch.object(w, 'probe_target', side_effect=lambda target, *a: (target, {'status': 'reachable'})), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -354,6 +356,74 @@ class IntegrationTests(unittest.TestCase):
         self.assertFalse((self.root / 'results').exists())
         with patch.dict(os.environ, {'WEBRAPTOR_TEST_HELP': 'missing'}), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(w.main(['--check-tools', '--modules', 'curl']), 1)
+
+    def test_single_target_manifest_layout_and_directory_resume(self):
+        self.assertEqual(self.run_main('--modules', 'curl', '--no-progress'), 0)
+        root = self.root/'results'
+        self.assertFalse((root/'_runs').exists())
+        summary = self.summaries()[0]
+        folder = Path(summary['run_directory'])
+        self.assertEqual({p.name for p in folder.iterdir()}, {'report.html','data','evidence','logs'})
+        manifest = folder/'data/run.json'
+        for location in (manifest, folder/'data', folder):
+            parsed = w.load_resume(location)
+            self.assertEqual(parsed['base'], root.resolve())
+            self.assertEqual(parsed['targets'], [['https://example.com/', True]])
+        with patch.object(w, 'tool_executable', side_effect=AssertionError('Completed curl should be reused')):
+            self.assertEqual(self.resume(folder), 0)
+        self.assertFalse((root/'_runs').exists())
+        latest = max(self.summaries(), key=lambda r:r['started_at'])
+        self.assertIn('reused_from', latest['modules'][0])
+
+    def test_target_manifest_cannot_change_scope_or_move_under_wrong_target(self):
+        self.assertEqual(self.run_main('--modules', 'curl', '--no-progress'), 0)
+        manifest = self.manifest()
+        original = json.loads(manifest.read_text())
+        altered = dict(original, targets=original['targets']+[['https://other.test/', True]])
+        manifest.write_text(json.dumps(altered))
+        with self.assertRaises(ValueError):
+            w.load_resume(manifest)
+        manifest.write_text(json.dumps(original))
+        wrong = self.root/'results/wrong-target'/original['run_id']/'data/run.json'
+        wrong.parent.mkdir(parents=True)
+        wrong.write_text(json.dumps(original))
+        with self.assertRaises(ValueError):
+            w.load_resume(wrong)
+
+    def test_legacy_single_session_resume_creates_target_manifest(self):
+        self.assertEqual(self.run_main('--modules', 'curl', '--no-progress'), 0)
+        original = self.manifest()
+        data = json.loads(original.read_text())
+        legacy = self.root/'results/_runs'/data['run_id']/'run.json'
+        legacy.parent.mkdir(parents=True)
+        shutil.move(str(original), str(legacy))
+        self.assertEqual(self.resume(legacy.parent), 0)
+        self.assertEqual(len(list((self.root/'results/_runs').iterdir())), 1)
+        self.assertEqual(self.manifest().parent.name, 'data')
+        latest = max(self.summaries(),key=lambda r:r['started_at'])
+        self.assertIn('reused_from', latest['modules'][0])
+
+    def test_multi_target_session_resume_retries_failures_and_keeps_index(self):
+        targets = self.root/'targets'
+        targets.write_text('one.test\ntwo.test\n')
+        output = self.root/'results'
+        with patch.dict(os.environ, {'WEBRAPTOR_TEST_FAIL_MODULE':'nikto'}), patch.object(w, 'probe_target', side_effect=lambda target,*a:(target,{'status':'reachable'})), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(w.main(['-l',str(targets),'--modules','curl,nikto','--no-progress','--output-dir',str(output)]),1)
+        manifest = self.manifest()
+        self.assertEqual(manifest.parent.parent.name, '_runs')
+        self.assertEqual(len(json.loads(manifest.read_text())['targets']),2)
+        self.assertFalse(list(output.glob('*/2*/data/run.json')))
+        self.assertTrue((manifest.parent/'report.html').exists())
+        self.assertEqual(self.resume(manifest.parent),0)
+        latest = self.manifest()
+        self.assertNotEqual(latest,manifest)
+        batch = json.loads((latest.parent/'summary.json').read_text())
+        self.assertEqual(len(batch['targets']),2)
+        for result in batch['targets']:
+            self.assertEqual(result['status'],'completed')
+            self.assertIn('reused_from', next(m for m in result['modules'] if m['module']=='curl'))
+            self.assertNotIn('reused_from', next(m for m in result['modules'] if m['module']=='nikto'))
+        self.assertTrue((latest.parent/'report.html').exists())
 
     def test_resume_preserves_completed_and_retries_failed(self):
         events = self.root / 'events'
@@ -400,6 +470,9 @@ class IntegrationTests(unittest.TestCase):
         manifest = self.manifest()
         data = json.loads(manifest.read_text())
         data['targets'].append(['https://pending.test/', True])
+        # A legacy session may contain a target whose scan never started.
+        manifest = self.root/'results/_runs'/data['run_id']/'run.json'
+        manifest.parent.mkdir(parents=True)
         manifest.write_text(json.dumps(data))
         self.assertEqual(self.resume(manifest), 0)
         latest_batch = json.loads((self.manifest().parent / 'summary.json').read_text())

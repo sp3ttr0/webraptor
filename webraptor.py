@@ -174,7 +174,7 @@ def parse_args(argv=None):
     parser.add_argument('-l', '--targets-file', help='One target per line; # comments allowed')
     parser.add_argument('--check-tools', action='store_true', help='Check versions and required CLI flags without scanning')
     parser.add_argument('--verify-findings', action='store_true', help=argparse.SUPPRESS)  # Legacy no-op; verification is automatic.
-    parser.add_argument('--resume', help='Previous batch directory or run.json; writes a new run')
+    parser.add_argument('--resume', help='Previous target run/data directory or session run.json; writes a new run')
     parser.add_argument('--no-progress', action='store_true', help='Disable live scanner output and progress on stderr')
     parser.add_argument('--output-dir', default='results')
     parser.add_argument('--modules', default=','.join(MODULES), help='Comma-separated module names')
@@ -209,7 +209,7 @@ def parse_args(argv=None):
         try:
             args.resume_data = load_resume(args.resume)
         except (OSError, ValueError, TypeError, KeyError, AttributeError):
-            parser.error('Invalid or unsupported resume manifest; use a batch run.json from this version')
+            parser.error('Invalid or unsupported resume manifest; use a target data/run.json or session run.json')
         for key, value in args.resume_data['settings'].items():
             option = '--' + key.replace('_', '-')
             if option in supplied and key not in ('threads', 'target_concurrency', 'tool_timeout', 'probe_timeout', 'modules'):
@@ -275,12 +275,17 @@ SAVED_SETTINGS = ('modules', 'threads', 'target_concurrency', 'tool_timeout', 'p
 def load_resume(location):
     manifest = Path(location).expanduser().resolve()
     if manifest.is_dir():
-        manifest /= 'run.json'
+        target_manifest = manifest/'data/run.json'
+        manifest = target_manifest if target_manifest.is_file() else manifest/'run.json'
     data = json.loads(manifest.read_text(encoding='utf-8'))
     if data.get('schema_version') != 1 or data.get('kind') != 'webraptor-run':
         raise ValueError('Unknown manifest')
-    if manifest.parent.parent.name != '_runs' or data['run_id'] != manifest.parent.name:
-        raise ValueError('Manifest must remain in its original batch layout')
+    if manifest.name != 'run.json':
+        raise ValueError('Unknown manifest filename')
+    target_layout = manifest.parent.name == 'data' and manifest.parent.parent.name == data['run_id']
+    session_layout = manifest.parent.parent.name == '_runs' and manifest.parent.name == data['run_id']
+    if not target_layout and not session_layout:
+        raise ValueError('Manifest must remain in its original target or session layout')
     data['settings'].pop('js_advisories', None)  # Ignore the retired JavaScript-advisory setting in older v1 runs.
     if set(data['settings']) != set(SAVED_SETTINGS):
         raise ValueError('Incomplete settings')
@@ -307,7 +312,13 @@ def load_resume(location):
     for target, explicit in data['targets']:
         if '[REDACTED]' in target or normalize_target(target)[0] != target or type(explicit) is not bool:
             raise ValueError('Target unavailable for resume')
-    data['base'] = manifest.parent.parent.parent
+    if target_layout:
+        target_folder = manifest.parent.parent
+        if len(data['targets']) != 1 or target_folder.parent.name != target_key(data['targets'][0][0]):
+            raise ValueError('Target manifest does not match its target folder')
+        data['base'] = target_folder.parent.parent
+    else:
+        data['base'] = manifest.parent.parent.parent
     return data
 
 
@@ -778,7 +789,7 @@ class Progress:
         self.render()
 
 
-def print_completion(results, batch_folder, elapsed, cancelled=False):
+def print_completion(results, batch_folder, elapsed, cancelled=False, manifest_path=None):
     """Close with outcome and artifact locations, without implying full coverage on failures."""
     color = sys.stdout.isatty() and os.environ.get('TERM') != 'dumb' and 'NO_COLOR' not in os.environ
     complete = sum(result['status'] == 'completed' for result in results)
@@ -807,7 +818,7 @@ def print_completion(results, batch_folder, elapsed, cancelled=False):
         emit('  Batch report', Fore.CYAN)
         emit('    ' + str(batch_folder / 'report.html'))
     emit('  Resume manifest', Fore.CYAN)
-    emit('    ' + str(batch_folder / 'run.json'))
+    emit('    ' + str(manifest_path if manifest_path is not None else batch_folder/'run.json'))
     emit('')
     emit('  Hunt Smarter, Not Harder.', Fore.CYAN)
     emit('')
@@ -1273,10 +1284,13 @@ def verify_target(target, args, folder, slots, stop, redact, modules=()):
     return assess_target(target, args, folder, stop, run_command, redact, modules)
 
 
-def scan_target(target, explicit, args, batch_id, slots, stop, redact):
+def scan_target(target, explicit, args, batch_id, slots, stop, redact, run_manifest=None):
     started = time.monotonic()
     folder = Path(args.output_dir).resolve() / target_key(target) / batch_id
     folder.mkdir(parents=True, exist_ok=False, mode=0o700)
+    if run_manifest is not None:
+        (folder/'data').mkdir(mode=0o700)
+        write_json(folder/'data/run.json', run_manifest)
     reusable = reusable_results(target, args)
     summary = {'schema_version': 1, 'target': redact(target), 'started_at': timestamp(),
                'status': 'running', 'modules': [], 'probe': {}, 'run_directory': str(folder)}
@@ -1396,26 +1410,34 @@ def main(argv=None):
     try:
         print_banner()
         batch_id = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ') + '-' + uuid.uuid4().hex[:8]
-        batch_folder = Path(args.output_dir).resolve() / '_runs' / batch_id
+        output_root = Path(args.output_dir).resolve()
+        single_target = len(args.targets) == 1
+        batch_folder = None if single_target else output_root/'_runs'/batch_id
+        manifest_path = (output_root/target_key(args.targets[0][0])/batch_id/'data/run.json'
+                         if single_target else batch_folder/'run.json')
         slots = threading.BoundedSemaphore(args.threads)
         redact = Redactor(args.headers)
         results = []
-        batch_folder.mkdir(parents=True, exist_ok=False, mode=0o700)
-        write_json(batch_folder / 'run.json', {
+        run_manifest = {
             'kind': 'webraptor-run', 'schema_version': 1, 'run_id': batch_id,
             'targets': [[redact(t), explicit] for t, explicit in args.targets],
             'settings': {key: getattr(args, key) for key in SAVED_SETTINGS},
             'header_names': [name.lower() for name, _ in args.headers],
-        })
-        print('Resume manifest: ' + str(batch_folder / 'run.json'), flush=True)
+        }
+        if batch_folder is not None:
+            batch_folder.mkdir(parents=True, exist_ok=False, mode=0o700)
+            write_json(manifest_path, run_manifest)
+        print('Resume manifest: ' + str(manifest_path), flush=True)
         with Progress(args.targets, args.modules + ['verification'], not args.no_progress) as progress, ThreadPoolExecutor(max_workers=min(args.target_concurrency, len(args.targets))) as pool:
             args.progress = progress
-            futures = [pool.submit(scan_target, target, explicit, args, batch_id, slots, STOP, redact)
+            futures = [pool.submit(scan_target, target, explicit, args, batch_id, slots, STOP, redact,
+                                       run_manifest if single_target else None)
                        for target, explicit in args.targets]
             for future in as_completed(futures):
                 results.append(future.result())
-                write_batch(batch_folder, batch_id, results)
-        print_completion(results, batch_folder, time.monotonic() - progress.started, STOP.is_set())
+                if batch_folder is not None:
+                    write_batch(batch_folder, batch_id, results)
+        print_completion(results, batch_folder, time.monotonic() - progress.started, STOP.is_set(), manifest_path)
         return 130 if STOP.is_set() else (0 if all(r['status'] == 'completed' for r in results) else 1)
     except OSError as exc:
         print('Output/process error: ' + type(exc).__name__, file=sys.stderr)

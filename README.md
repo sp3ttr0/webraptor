@@ -51,7 +51,7 @@ python webraptor.py --targets-file targets.txt
 python webraptor.py https://example.com --headers-file headers.txt --cookie-file cookies.txt
 
 # Resume a previous run
-python webraptor.py --resume results/_runs/<run-id>/run.json
+python webraptor.py --resume results/<target>/<run-id>/data/run.json
 
 # Show all options
 python webraptor.py --help
@@ -63,7 +63,7 @@ Scanners run simultaneously (up to six; adjust with `--threads`). The compact te
 
 ## Reports
 
-Reports and raw evidence are saved under `results/`. Open a target's **`report.html`** for collapsible scanner results, linked URLs, and verified findings. **`data/verification.json`** contains the complete check record. Each target run contains only `report.html`, `data/`, `evidence/`, and `logs/`. Keep them together so evidence links work. Batch reports are under `results/_runs/`.
+Reports and raw evidence are saved under `results/`. Open a target's **`report.html`** for collapsible scanner results, linked URLs, and verified findings. **`data/verification.json`** contains the complete check record. Each target run contains only `report.html`, `data/`, `evidence/`, and `logs/`. Keep them together so evidence links work. Single-target resume information lives in `data/run.json`; no `_runs/` folder is created. Multi-target session reports and resume manifests remain under `results/_runs/<run-id>/`. Existing session manifests still work.
 
 The **22 automatic checks** cover security headers, TLS protocols and ciphers, certificates, and compression indicators. Automatic TLS verification needs sslscan even when its standalone module is excluded.
 
