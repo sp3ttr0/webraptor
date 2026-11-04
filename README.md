@@ -16,6 +16,8 @@ python webraptor.py --check-tools
 
 The installer requires network access and sudo for system packages. It installs dependencies and Nuclei templates, then checks all eight tools. It does not scan a target.
 
+The installer pins upstream testssl commit `2168273` (stable 3.2), which fixes the TLS 1.3 session-ticket race. Activate `.venv` to use this managed copy.
+
 Requires **Python 3.9+**. For manual setup on Linux or macOS, install the scanner tools in `PATH`, create a virtual environment, and run `pip install -r requirements.txt`. The requirements file installs Python dependencies only.
 
 Validated in a **Kali Rolling ARM64 Docker container**: installation and all eight tool checks passed. Parrot and x86_64 installation remain untested.
@@ -57,11 +59,11 @@ python webraptor.py --help
 
 Header files contain one `Name: value` per line. Cookie files contain the cookie value only. Resupply credentials when resuming. Resume creates a new run and reuses eligible scanner outputs; verification always runs fresh.
 
-Scanners run simultaneously by default (up to six; adjust with `--threads`). Interactive terminals show a cyan progress panel with colored tool states and elapsed times and scanner-reported percentages when available; other tools show a spinner. Raw output stays in the saved, redacted evidence logs. Redirected output shows status changes without terminal escape codes. The closing summary lists the outcome, elapsed time, report, evidence, logs, and resume manifest. Set `NO_COLOR=1` to disable terminal colors. Use `--no-progress` to silence progress.
+Scanners run simultaneously (up to six; adjust with `--threads`). The compact terminal panel shows only activity each tool provides, update ages, and stale-output warnings after 30 seconds. Raw output stays in redacted evidence/log files. Use `--no-progress` to silence progress or `NO_COLOR=1` to disable colors.
 
 ## Reports
 
-Reports and raw evidence are saved under `results/`. Open a target's **`report.html`** for collapsible scanner results, linked URLs, and verified findings. **`data/verification.json`** contains the complete check record. Supporting files are grouped into `evidence/` and `logs/`; each target run has only one top-level HTML report. Batch reports are under `results/_runs/`.
+Reports and raw evidence are saved under `results/`. Open a target's **`report.html`** for collapsible scanner results, linked URLs, and verified findings. **`data/verification.json`** contains the complete check record. Each target run contains only `report.html`, `data/`, `evidence/`, and `logs/`. Keep them together so evidence links work. Batch reports are under `results/_runs/`.
 
 The **22 automatic checks** cover security headers, TLS protocols and ciphers, certificates, and compression indicators. Automatic TLS verification needs sslscan even when its standalone module is excluded.
 
@@ -82,3 +84,4 @@ Generated reports, environments, caches, and common credential files are exclude
 ## License
 
 [MIT License](LICENSE).
+

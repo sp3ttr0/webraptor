@@ -371,6 +371,13 @@ class Progress:
         self.states = {(target_key(t), m): ('queued', self.started) for t, _ in targets for m in modules}
         self.labels = {target_key(t): urlsplit(t).netloc for t, _ in targets}
         self.elapsed, self.percentages = {}, {}
+        self.scanner_metrics = {}
+        self.nikto_activity = {}
+        self.tls_activity = {}
+        self.whatweb_activity = {}
+        self.wayback_activity = {}
+        self.curl_activity = {}
+        self.stale_after = 30.0
         self.worker = None
         self.tty = sys.stderr.isatty() and os.environ.get('TERM') != 'dumb'
         self.color = self.tty and 'NO_COLOR' not in os.environ
@@ -382,16 +389,174 @@ class Progress:
         # recognized scanner progress fields, never arbitrary percentages in findings.
         if not self.enabled:
             return
+        if module == 'curl':
+            if not text.strip():
+                return
+            key = (target_key(target), module)
+            with self.lock:
+                if self.states.get(key, (None,))[0] != 'running':
+                    return
+                activity = self.curl_activity.setdefault(key, {})
+                activity['output_at'] = time.monotonic()
+                response = re.match(r'^HTTP/(\d+(?:\.\d+)?)\s+([1-5]\d{2})(?:\s|$)', text.strip())
+                if response:
+                    activity.update(protocol=response[1], http_status=response[2], response_at=time.monotonic())
+                error = re.match(r'^curl:\s*\((\d+)\)', text.strip())
+                if error:
+                    activity['error_code'] = error[1]
+            return
+        if module == 'waybackurls':
+            if not text.strip():
+                return
+            key = (target_key(target), module)
+            value = text.strip()
+            is_url = False
+            if re.fullmatch(r'https?://[^\s]+', value, re.I):
+                try:
+                    is_url = bool(urlsplit(value).hostname)
+                except ValueError:
+                    pass
+            with self.lock:
+                if self.states.get(key, (None,))[0] != 'running':
+                    return
+                activity = self.wayback_activity.setdefault(key, {'urls': 0})
+                activity['output_at'] = time.monotonic()
+                if is_url:
+                    activity['urls'] += 1
+                    activity['url_at'] = time.monotonic()
+            return
+        if module == 'whatweb':
+            if not text.strip():
+                return
+            key = (target_key(target), module)
+            with self.lock:
+                if self.states.get(key, (None,))[0] != 'running':
+                    return
+                activity = self.whatweb_activity.setdefault(key, {})
+                activity['output_at'] = time.monotonic()
+                value = text.strip()
+                stage = None
+                if value.startswith('WhatWeb report for '):
+                    stage = 'Technology report'
+                elif re.fullmatch(r'Detected Plugins:', value):
+                    stage = 'Detected plugin details'
+                elif re.fullmatch(r'HTTP Headers:', value):
+                    stage = 'HTTP response headers'
+                elif value.startswith('ERROR Opening:'):
+                    stage = 'Connection error reported'
+                status = re.match(r'^Status\s*:\s*([1-5]\d{2})(?:\s|$)', value)
+                if status:
+                    activity['http_status'] = status[1]
+                if stage:
+                    activity['stage'] = stage
+                    activity['stage_at'] = time.monotonic()
+            return
+        if module in ('testssl', 'sslscan'):
+            if not text.strip():
+                return
+            # Select fixed labels from testssl headings, never echo target data.
+            stages = (
+                (r'^Testing HTTP header response', 'HTTP headers'),
+                (r'^Testing protocols', 'TLS protocols'),
+                (r'^Testing cipher categories', 'Cipher categories'),
+                (r"^Testing server's cipher preferences", 'Server cipher preferences'),
+                (r'^Testing server defaults', 'Server defaults and certificate'),
+                (r'^Testing robust forward secrecy', 'Forward secrecy'),
+                (r'^Testing ciphers per protocol', 'Ciphers per protocol'),
+                (r'^Testing ciphers with', 'Cipher support'),
+                (r'^Testing vulnerabilities', 'TLS vulnerabilities'),
+                (r'^Testing for ', 'TLS vulnerability checks'),
+                (r'^Checking for ', 'Additional TLS checks'),
+            )
+            if module == 'sslscan':
+                stages = (
+                    (r'^Testing SSL server\b', 'TLS server checks'),
+                    (r'^SSL/TLS Protocols\s*:', 'TLS protocols'),
+                    (r'^TLS Fallback SCSV\s*:', 'TLS fallback protection'),
+                    (r'^TLS renegotiation\s*:', 'TLS renegotiation'),
+                    (r'^TLS Compression\s*:', 'TLS compression'),
+                    (r'^Heartbleed\s*:', 'Heartbleed checks'),
+                    (r'^Supported Server Cipher', 'Server cipher support'),
+                    (r'^Server Key Exchange Group', 'Key exchange groups'),
+                    (r'^SSL Certificate\s*:', 'Server certificate'),
+                )
+            key = (target_key(target), module)
+            with self.lock:
+                if self.states.get(key, (None,))[0] != 'running':
+                    return
+                activity = self.tls_activity.setdefault(key, {})
+                activity['output_at'] = time.monotonic()
+                for pattern, label in stages:
+                    if re.search(pattern, text.strip(), re.I):
+                        activity['stage'] = label
+                        activity['stage_at'] = time.monotonic()
+                        break
+            return
+        if module == 'nikto':
+            if not re.match(r'^\s*[-+]\s+(?:STATUS:|Start Time:|Server:|Target |End Time:|[0-9]+ requests:)', text):
+                # Findings still establish output activity without exposing their text.
+                if not re.match(r'^\s*\+ ', text):
+                    return
+            key = (target_key(target), module)
+            with self.lock:
+                if self.states.get(key, (None,))[0] != 'running':
+                    return
+                activity = self.nikto_activity.setdefault(key, {})
+                activity['output_at'] = time.monotonic()
+                completed = re.search(r'STATUS: Completed (\d+) requests', text)
+                if completed:
+                    activity['requests'] = int(completed[1])
+                    activity['progress_at'] = time.monotonic()
+                    percent = re.search(r'~(\d+(?:\.\d+)?)% complete', text)
+                    self.percentages.pop(key, None)
+                    if percent and 0 <= float(percent[1]) <= 100:
+                        self.percentages[key] = float(percent[1])
+                    plugin = re.search(r"currently in plugin '([A-Za-z0-9_ .-]{1,60})'", text)
+                    if plugin:
+                        activity['plugin'] = plugin[1]
+                timing = re.search(r'STATUS:.*?10 requests: (\d+(?:\.\d+)?) sec', text)
+                if timing:
+                    activity['timing'] = timing[1]
+            return
         match = None
         if module == 'dirsearch':
-            match = re.search(r'^\s*(?:\[[# \-]*\]\s*)?(\d{1,3}(?:\.\d+)?)%\s+\d+\s*/\s*\d+', text)
+            match = re.search(r'^\s*(?:\[[# \-]*\]\s*)?(\d{1,3}(?:\.\d+)?)%\s+(\d+)\s*/\s*(\d+)(?:\s+([\d.]+)\s*/s)?', text)
+            if match:
+                percent, done, total, rate = match[1], match[2], match[3], match[4]
         elif module == 'nuclei':
-            match = re.search(r'\[\d+:\d+:\d+\].*?Requests:\s*\d+/\d+\s*\((\d{1,3}(?:\.\d+)?)%\)', text, re.I)
-        if match and 0 <= float(match[1]) <= 100:
-            with self.lock:
-                key = (target_key(target), module)
-                if self.states.get(key, (None,))[0] == 'running':
-                    self.percentages[key] = float(match[1])
+            if text.lstrip().startswith('{'):
+                try:
+                    stats = json.loads(text)
+                    if not isinstance(stats, dict) or not re.fullmatch(r'\d+:\d+:\d+', str(stats.get('duration', ''))):
+                        return
+                    if not all(re.fullmatch(r'\d+(?:\.\d+)?', str(stats.get(k, ''))) for k in ('percent', 'requests', 'total')):
+                        return
+                    text = f"[{stats['duration']}] Requests: {stats['requests']}/{stats['total']} ({stats['percent']}%)"
+                    for source, label in (('rps', 'RPS'), ('errors', 'Errors')):
+                        value = str(stats.get(source, ''))
+                        if re.fullmatch(r'\d+(?:\.\d+)?', value):
+                            text += f' | {label}: {value}'
+                except (ValueError, TypeError):
+                    return
+            match = re.search(r'\[\d+:\d+:\d+\].*?Requests:\s*(\d+)/(\d+)\s*\((\d{1,3}(?:\.\d+)?)%\)', text, re.I)
+            if match:
+                done, total, percent = match[1], match[2], match[3]
+                rps = re.search(r'\bRPS:\s*(\d+(?:\.\d+)?)', text, re.I)
+                rate = rps[1] if rps else None
+        if not match or not 0 <= float(percent) <= 100:
+            return
+        done, total = int(done), int(total)
+        if total <= 0 or done > total:
+            return
+        errors = re.search(r'\berrors\s*:\s*(\d+)', text, re.I)
+        with self.lock:
+            key = (target_key(target), module)
+            if self.states.get(key, (None,))[0] == 'running':
+                self.percentages[key] = float(percent)
+                self.scanner_metrics[key] = {
+                    'done': done, 'total': total, 'rate': rate,
+                    'errors': errors[1] if errors else None, 'updated': time.monotonic()}
+
 
     def update(self, target, module, status):
         if not self.enabled:
@@ -406,6 +571,12 @@ class Progress:
             self.elapsed[key] = now - since if old == 'running' else 0
             if status == 'running':
                 self.percentages.pop(key, None)
+                self.scanner_metrics.pop(key, None)
+                self.nikto_activity.pop(key, None)
+                self.tls_activity.pop(key, None)
+                self.whatweb_activity.pop(key, None)
+                self.wayback_activity.pop(key, None)
+                self.curl_activity.pop(key, None)
             if not self.tty:
                 label = self.LABELS.get(module, module)
                 if self.multiple:
@@ -420,9 +591,10 @@ class Progress:
             width, height = shutil.get_terminal_size((80, 24))
             width = max(1, width - 1)  # Avoid autowrap at the last terminal column.
             now = time.monotonic()
-            rows, counts = [], {}
+            rows, counts, groups = [], {}, []
             spinner = '|/-\\'[int((now - self.started) * 5) % 4]
             for key, (status, since) in self.states.items():
+                group_start = len(rows)
                 counts[status] = counts.get(status, 0) + 1
                 label = self.LABELS.get(key[1], key[1])
                 if self.multiple:
@@ -431,15 +603,132 @@ class Progress:
                 state = self.OUTCOMES.get(status, status)
                 symbol = spinner if status == 'running' else '+' if status in ('completed', 'reused') else '!' if status in ('failed', 'timed_out') else '-'
                 percentage = self.percentages.get(key) if status == 'running' else None
+                metrics = self.scanner_metrics.get(key)
+                age = now - metrics['updated'] if metrics else now - since
+                activity = self.nikto_activity.get(key, {})
+                if key[1] == 'nikto':
+                    age = now - activity.get('progress_at', since)
+                stale = key[1] in ('dirsearch', 'nuclei', 'nikto') and status == 'running' and age >= self.stale_after
+                tls_activity = self.tls_activity.get(key, {})
+                tls_age = now - tls_activity.get('output_at', since)
+                if key[1] in ('testssl', 'sslscan') and status == 'running':
+                    stale = tls_age >= self.stale_after
+                web_activity = self.whatweb_activity.get(key, {})
+                web_age = now - web_activity.get('output_at', since)
+                if key[1] == 'whatweb' and status == 'running':
+                    stale = web_age >= self.stale_after
+                wayback = self.wayback_activity.get(key, {})
+                archive_age = now - wayback.get('output_at', since)
+                if key[1] == 'waybackurls' and status == 'running':
+                    stale = archive_age >= self.stale_after
+                curl_activity = self.curl_activity.get(key, {})
+                curl_age = now - curl_activity.get('output_at', since)
+                if key[1] == 'curl' and status == 'running':
+                    stale = curl_age >= self.stale_after
                 bar = ''
                 if percentage is not None:
                     filled = int(percentage / 10)
-                    bar = '[' + '#' * filled + '-' * (10 - filled) + f'] {percentage:g}% '
-                rows.append((status, f'{label:<22} {symbol} {state:<14} {bar}{elapsed:.0f}s'))
+                    bar = '[' + '#' * filled + '-' * (10 - filled) + f"] {'~' if key[1] == 'nikto' else ''}{percentage:g}% " + ('STALE ' if stale else '')
+                rows.append(('stale' if stale else status, f'{label:<22} {symbol} {state:<14} {bar}{elapsed:.0f}s'))
+                if key[1] == 'curl':
+                    if 'http_status' in curl_activity:
+                        rows.append((status, f"  Reported HTTP status: {curl_activity['http_status']} | HTTP/{curl_activity['protocol']}"))
+                    elif status == 'running':
+                        rows.append((status, '  Awaiting HTTP response headers'))
+                    if 'error_code' in curl_activity:
+                        rows.append(('failed', '  Reported curl error: ' + curl_activity['error_code']))
+                    if status == 'running':
+                        if 'response_at' in curl_activity:
+                            response_age = now - curl_activity['response_at']
+                            rows.append((status, f'  Last response: {response_age:.0f}s ago'))
+                        output_text = f'Last output: {curl_age:.0f}s ago' if curl_activity else f'Awaiting output: {curl_age:.0f}s'
+                        if stale:
+                            output_text += ' | STALE: no output update'
+                        rows.append(('stale' if stale else status, '  ' + output_text))
+                if key[1] == 'waybackurls' and status in ('running', 'completed', 'failed', 'timed_out', 'cancelled'):
+                    rows.append((status, f"  URLs received: {wayback.get('urls', 0)}"))
+                    if status == 'running':
+                        url_text = f"Last URL: {now - wayback['url_at']:.0f}s ago" if 'url_at' in wayback else 'Awaiting archived URL output'
+                        rows.append((status, '  ' + url_text))
+                        output_text = f'Last output: {archive_age:.0f}s ago' if wayback else f'Awaiting output: {archive_age:.0f}s'
+                        if stale:
+                            output_text += ' | STALE: no output update'
+                        rows.append(('stale' if stale else status, '  ' + output_text))
+                if key[1] == 'whatweb':
+                    if status == 'running':
+                        if 'stage' in web_activity:
+                            stage_age = now - web_activity['stage_at']
+                            rows.append((status, f"  Stage: {web_activity['stage']} ({stage_age:.0f}s)"))
+                        else:
+                            rows.append((status, '  Awaiting response/report output'))
+                    if 'http_status' in web_activity and status in ('running', 'completed', 'failed'):
+                        rows.append((status, '  Reported HTTP status: ' + web_activity['http_status']))
+                    if status == 'running':
+                        output_text = f'Last output: {web_age:.0f}s ago' if web_activity else f'Awaiting output: {web_age:.0f}s'
+                        if stale:
+                            output_text += ' | STALE: no output update'
+                        rows.append(('stale' if stale else status, '  ' + output_text))
+                if key[1] in ('testssl', 'sslscan') and status == 'running':
+                    if 'stage' in tls_activity:
+                        stage_age = now - tls_activity['stage_at']
+                        rows.append((status, f"  Stage: {tls_activity['stage']} ({stage_age:.0f}s)"))
+                    else:
+                        rows.append((status, '  Awaiting test stage'))
+                    output_text = f'Last output: {tls_age:.0f}s ago' if tls_activity else f'Awaiting output: {tls_age:.0f}s'
+                    if stale:
+                        output_text += ' | STALE: no output update'
+                    rows.append(('stale' if stale else status, '  ' + output_text))
+                if key[1] == 'nikto' and status == 'running':
+                    details = []
+                    if 'requests' in activity:
+                        details.append(f"Requests {activity['requests']}")
+                    if 'plugin' in activity:
+                        details.append('plugin ' + activity['plugin'])
+                    if 'timing' in activity:
+                        details.append('avg latency (10): ' + activity['timing'] + 's')
+                    if details:
+                        rows.append(('stale' if stale else status, '  ' + ' | '.join(details)))
+                    progress_age = f'Last progress: {age:.0f}s ago' if 'progress_at' in activity else f'Awaiting progress: {age:.0f}s'
+                    if stale:
+                        progress_age += ' | STALE'
+                    rows.append(('stale' if stale else status, '  ' + progress_age))
+                    output_age = now - activity.get('output_at', since)
+                    output_text = f'Last output: {output_age:.0f}s ago' if activity else f'Awaiting output: {output_age:.0f}s'
+                    rows.append((status, '  ' + output_text))
+                if key[1] in ('dirsearch', 'nuclei') and status == 'running':
+                    if metrics:
+                        rate = metrics['rate'] + '/s' if metrics['rate'] is not None else 'unknown rate'
+                        errors = metrics['errors'] if metrics['errors'] is not None else '?'
+                        details = f"  Requests {metrics['done']}/{metrics['total']} | {rate} | errors {errors}"
+                        rows.append(('stale' if stale else status, details))
+                    age_text = f'  Last progress: {age:.0f}s ago' if metrics else f'  Awaiting progress: {age:.0f}s'
+                    if stale:
+                        age_text += ' | STALE: no progress update'
+                    rows.append(('stale' if stale else status, age_text))
+                groups.append((status, rows[group_start:]))
             capacity = max(1, height - 6)
-            # Keep active tasks visible when a batch exceeds the terminal height.
             if len(rows) > capacity:
-                rows.sort(key=lambda row: row[0] != 'running')
+                # Reserve a status row for each tool before spending space on
+                # activity, so busy tools cannot push other tool headings away.
+                ordered = groups
+                if len(groups) > capacity:
+                    ordered = sorted(groups, key=lambda group: group[0] != 'running')
+                detail_budget = max(0, capacity - len(groups))
+                rows = []
+                for group_status, group_rows in ordered:
+                    rows.append(group_rows[0])
+                    if len(group_rows) > 1 and detail_budget:
+                        text = ' | '.join(value.strip() for _, value in group_rows[1:])
+                        for old, new in (('Reported HTTP status:', 'HTTP'), ('Last output:', 'output'),
+                                         ('Last progress:', 'update'), ('Last response:', 'response'),
+                                         ('Last URL:', 'URL'), ('URLs received:', 'URLs'),
+                                         ('Requests', 'req'), ('Stage:', 'stage'),
+                                         ('Awaiting', 'waiting'), (' ago', '')):
+                            text = text.replace(old, new)
+                        tone = 'stale' if any(tone == 'stale' for tone, _ in group_rows) else group_status
+                        rows.append((tone, '  ' + text))
+                        detail_budget -= 1
+            # Keep active tasks visible when a batch exceeds the terminal height.
             inner = max(0, width - 4)
             def framed(text):
                 if width < 8:
@@ -452,13 +741,13 @@ class Progress:
             visible = [(edge('WEBRAPTOR · SCANNER PROGRESS', '┌', '┐'), Fore.CYAN)]
             colors = {'running': Fore.CYAN, 'completed': Fore.GREEN, 'reused': Fore.GREEN,
                       'failed': Fore.RED, 'timed_out': Fore.RED, 'cancelled': Fore.YELLOW,
-                      'skipped': Fore.YELLOW, 'not_applicable': Fore.YELLOW}
+                      'skipped': Fore.YELLOW, 'not_applicable': Fore.YELLOW, 'stale': Fore.YELLOW}
             visible += [(framed(text), colors.get(status, Style.DIM)) for status, text in rows[:capacity]]
             if len(rows) > capacity:
                 visible.append((framed(f'... {len(rows) - capacity} more tasks'), Style.DIM))
             done = counts.get('completed', 0) + counts.get('reused', 0)
             failed = counts.get('failed', 0) + counts.get('timed_out', 0)
-            visible.append((framed(f'Finished {done}/{len(rows)} | Running {counts.get("running", 0)} | Failed {failed} | Queued {counts.get("queued", 0)}'), Fore.CYAN))
+            visible.append((framed(f'Finished {done}/{len(self.states)} | Running {counts.get("running", 0)} | Failed {failed} | Queued {counts.get("queued", 0)}'), Fore.CYAN))
             visible.append((edge('Hunt Smarter, Not Harder', '└', '┘'), Fore.CYAN))
             if self.lines:
                 sys.stderr.write(f'\x1b[{self.lines}A')
@@ -590,7 +879,7 @@ def copy_redacted(source, destination, redact):
             output.write(redact(line.decode('utf-8', errors='replace')))
 
 
-def run_command(cmd, stdout_path, stderr_path, timeout, stop, redact, on_output=None):
+def run_command(cmd, stdout_path, stderr_path, timeout, stop, redact, on_output=None, tty_stdout=False):
     started = time.monotonic()
     result = {'status': 'cancelled', 'exit_code': None, 'duration_seconds': 0.0}
     if stop.is_set():
@@ -599,6 +888,7 @@ def run_command(cmd, stdout_path, stderr_path, timeout, stop, redact, on_output=
     # appearing in persistent console logs before redaction.
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         proc = None
+        master = slave = None
         offsets, pending, dropping = [0, 0], [b'', b''], [False, False]
         def emit(data):
             text = data.decode('utf-8', errors='replace')
@@ -608,6 +898,20 @@ def run_command(cmd, stdout_path, stderr_path, timeout, stop, redact, on_output=
             if text.strip():
                 on_output(redact(text))
         def stream_output(final=False):
+            if master is not None:
+                while True:
+                    try:
+                        chunk = os.read(master, 65536)
+                    except BlockingIOError:
+                        break
+                    except OSError as exc:
+                        if exc.errno == 5:  # POSIX PTY EOF after the slave closes.
+                            break
+                        raise
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                out.flush()
             if on_output is None:
                 return
             for index, source in enumerate((out, err)):
@@ -617,7 +921,7 @@ def run_command(cmd, stdout_path, stderr_path, timeout, stop, redact, on_output=
                     if not block:
                         break
                     offsets[index] += len(block)
-                    parts = re.split(rb'[\r\n]', pending[index] + block)
+                    parts = re.split(rb'[\r\n]|\x1b\[1K\x1b\[0G', pending[index] + block)
                     pending[index] = parts.pop()
                     for part in parts:
                         if not dropping[index]:
@@ -630,8 +934,19 @@ def run_command(cmd, stdout_path, stderr_path, timeout, stop, redact, on_output=
                     emit(pending[index])
                     pending[index] = b''
         try:
-            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out,
+            if tty_stdout:
+                master, slave = os.openpty()
+                # Preserve the scanner's original line endings in evidence logs.
+                import termios
+                attributes = termios.tcgetattr(slave)
+                attributes[1] &= ~termios.OPOST
+                termios.tcsetattr(slave, termios.TCSANOW, attributes)
+                os.set_blocking(master, False)
+            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=slave if tty_stdout else out,
                                     stderr=err, start_new_session=True)
+            if slave is not None:
+                os.close(slave)
+                slave = None
             while True:
                 stream_output()
                 if stop.is_set():
@@ -654,7 +969,13 @@ def run_command(cmd, stdout_path, stderr_path, timeout, stop, redact, on_output=
         finally:
             if proc is not None and proc.poll() is None:
                 terminate_group(proc)
-            stream_output(final=True)
+            try:
+                stream_output(final=True)
+            finally:
+                if master is not None:
+                    os.close(master)
+                if slave is not None:
+                    os.close(slave)
             copy_redacted(out, stdout_path, redact)
             copy_redacted(err, stderr_path, redact)
     result['duration_seconds'] = round(time.monotonic() - started, 3)
@@ -669,9 +990,9 @@ def tool_executable(module):
 
 # Help probes have no targets and never execute scanner tests.
 TOOL_CHECKS = {
-    'curl': (['--disable', '--version'], ['--disable', '--help', 'all'], ['--head', '--silent', '--show-error', '--url', '--disable', '--location', '--max-redirs', '--proto-redir']),
+    'curl': (['--disable', '--version'], ['--disable', '--help', 'all'], ['--head', '--silent', '--show-error', '--url', '--disable', '--styled-output', '--location', '--max-redirs', '--proto-redir']),
     'whatweb': (['--version'], ['--help'], ['--color', '--max-threads', '--wait', '--follow-redirect', '-v']),
-    'nikto': (['-Version'], ['-Help'], ['-Cgidirs', '-host', '-Pause', '-ask', '-nointeractive']),
+    'nikto': (['-Version'], ['-Help'], ['-Cgidirs', '-host', '-Pause', '-ask', '-nointeractive', '-Display']),
     'waybackurls': (None, ['-h'], ['-dates', '-no-subs']),
     'dirsearch': (['--version'], ['--help-all'], ['-u', '-e', '--random-agent', '-t', '--max-rate', '-o']),
     'nuclei': (['-version'], ['-h'], ['-u', '-jsonl', '-omit-raw', '-no-color', '-disable-redirects', '-stats', '-rate-limit', '-o']),
@@ -780,7 +1101,7 @@ def build_command(module, target, folder, args):
     """Tool outputs are relative to the target run, with separate console logs."""
     artifact = folder / (module + '_results.txt')
     if module == 'curl':
-        cmd = ['curl', '--disable', '--head', '--silent', '--show-error', '--url', target, '--location', '--max-redirs', '10', '--proto-redir', '=http,https']
+        cmd = ['curl', '--disable', '--no-styled-output', '--head', '--silent', '--show-error', '--url', target, '--location', '--max-redirs', '10', '--proto-redir', '=http,https']
         if args.insecure:
             cmd.append('--insecure')
     elif module == 'testssl':
@@ -791,7 +1112,7 @@ def build_command(module, target, folder, args):
         cmd = ['whatweb', '-v', '--color=never', '--max-threads=1',
                '--wait=' + str(args.whatweb_wait), '--follow-redirect=never', target]
     elif module == 'nikto':
-        cmd = ['nikto', '-C', 'all', '-host', target, '-Pause', str(args.nikto_pause), '-ask', 'no', '-nointeractive']
+        cmd = ['nikto', '-C', 'all', '-host', target, '-Pause', str(args.nikto_pause), '-ask', 'no', '-nointeractive', '-Display', 'P']
     elif module == 'waybackurls':
         artifact = folder / 'wayback_results' / 'urls.txt'
         cmd = ['waybackurls', urlsplit(target).hostname]
@@ -882,7 +1203,7 @@ def execute_module(module, target, folder, args, slots, stop, redact, progress_t
         result['started_at'] = timestamp()
         result['authentication'] = 'not_applicable' if module in ('waybackurls', 'sslscan') else ('headers_supplied' if args.headers else 'none')
         callback = (lambda text: progress.output(progress_target or target, module, text)) if progress and progress.enabled else None
-        result.update(run_command(cmd, stdout, stderr, args.tool_timeout, stop, redact, on_output=callback))
+        result.update(run_command(cmd, stdout, stderr, args.tool_timeout, stop, redact, on_output=callback, tty_stdout=(module in ('sslscan', 'whatweb', 'curl'))))
         redact_artifact(artifact, redact)
         failure = scanner_failure(module, (stdout, stderr))
         if failure and result['status'] == 'completed':

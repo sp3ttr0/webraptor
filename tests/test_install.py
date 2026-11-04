@@ -18,6 +18,56 @@ class InstallerTests(unittest.TestCase):
         return subprocess.run(['bash', '-c', 'source "$1"\n' + code, 'test-installer', str(INSTALLER), *arguments],
                               capture_output=True, text=True, timeout=10)
 
+    def test_pinned_testssl_fix_is_verified_and_wrapped(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            checkout = root/'.tools/testssl'
+            (checkout/'.git').mkdir(parents=True)
+            (root/'.venv/bin').mkdir(parents=True)
+            script = checkout/'testssl.sh'
+            script.write_text('#!/bin/sh\nprintf "fixed-testssl:%s\\n" "$1"\n')
+            script.chmod(0o755)
+            run = self.shell("""
+SCRIPT_DIR="$2"
+git() {
+    case "$*" in
+        *'cat-file -e'*) return 0 ;;
+        *'checkout --detach'*) return 0 ;;
+        *'rev-parse HEAD'*) printf '216827365345f8abdb97c177636809a10e64fbe5\n' ;;
+        *) return 99 ;;
+    esac
+}
+install_fixed_testssl
+"$SCRIPT_DIR/.venv/bin/testssl" '--version'
+""", str(root))
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertIn('fixed-testssl:--version', run.stdout)
+            self.assertIn('216827365345f8abdb97c177636809a10e64fbe5', INSTALLER.read_text())
+
+    def test_fixed_testssl_refuses_unmanaged_checkout_and_wrong_revision(self):
+        for managed in (False, True):
+            with self.subTest(managed=managed), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                checkout = root/'.tools/testssl'
+                checkout.mkdir(parents=True)
+                (root/'.venv/bin').mkdir(parents=True)
+                if managed:
+                    (checkout/'.git').mkdir()
+                run = self.shell("""
+SCRIPT_DIR="$2"
+git() {
+    case "$*" in
+        *'cat-file -e'*|*'checkout --detach'*) return 0 ;;
+        *'rev-parse HEAD'*) printf 'wrong-revision\n' ;;
+        *) return 99 ;;
+    esac
+}
+install_fixed_testssl
+""", str(root))
+                self.assertNotEqual(run.returncode, 0)
+                self.assertFalse((root/'.venv/bin/testssl').exists())
+                self.assertIn('revision verification failed' if managed else 'Unmanaged', run.stderr)
+
     def test_syntax_and_sourcing_do_not_install(self):
         subprocess.run(['bash', '-n', str(INSTALLER)], check=True)
         run = self.shell('printf "sourced\\n"')

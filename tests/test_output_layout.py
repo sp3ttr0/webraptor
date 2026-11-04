@@ -24,6 +24,21 @@ class OutputLayoutTests(unittest.TestCase):
             self.assertIn('href="evidence/scanners/curl_results.txt"',(root/'report.html').read_text())
             self.assertEqual(organize_output(root,updated),updated)
 
+    def test_reorganizing_preserves_saved_check_data_and_discards_finder_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root/'data').mkdir()
+            report = dict(target='https://example.invalid', checks=[], scanner_results=[
+                dict(module='whatweb', status='completed', output='Status : 200 OK', artifacts=[])])
+            (root/'data/verification.json').write_text(json.dumps(report))
+            (root/'.DS_Store').write_bytes(b'cache')
+            summary = dict(target=report['target'], status='completed', modules=[])
+            organize_output(root, summary)
+            self.assertEqual(json.loads((root/'data/verification.json').read_text()), report)
+            self.assertIn('200', (root/'report.html').read_text())
+            self.assertFalse((root/'.DS_Store').exists())
+            self.assertFalse(any(root.rglob('.DS_Store')))
+
     def test_legacy_summary_remains_resumable(self):
         from types import SimpleNamespace
         from webraptor import reusable_results, target_key

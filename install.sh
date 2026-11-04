@@ -48,6 +48,26 @@ wrap_distro_dirsearch() {
     chmod +x "$SCRIPT_DIR/.venv/bin/dirsearch"
 }
 
+install_fixed_testssl() {
+    # Upstream stable-branch fix for the TLS 1.3 post-handshake ticket race (#3188).
+    local revision='216827365345f8abdb97c177636809a10e64fbe5'
+    local checkout="$SCRIPT_DIR/.tools/testssl"
+    log 'Installing pinned upstream testssl with the TLS 1.3 session-ticket fix'
+    if [[ ! -d "$checkout/.git" ]]; then
+        [[ ! -e "$checkout" ]] || die 'Unmanaged .tools/testssl exists; move it aside before installing.'
+        mkdir -p "$SCRIPT_DIR/.tools"
+        git clone --no-checkout --depth 1 --single-branch --branch 3.2 https://github.com/testssl/testssl.sh.git "$checkout"
+    fi
+    if ! git -C "$checkout" cat-file -e "$revision^{commit}" 2>/dev/null; then
+        git -C "$checkout" fetch --depth 1 https://github.com/testssl/testssl.sh.git "$revision"
+    fi
+    git -C "$checkout" checkout --detach "$revision"
+    [[ "$(git -C "$checkout" rev-parse HEAD)" == "$revision" ]] || die 'testssl revision verification failed.'
+    [[ -x "$checkout/testssl.sh" ]] || die 'Pinned testssl executable is missing.'
+    printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$checkout/testssl.sh" > "$SCRIPT_DIR/.venv/bin/testssl"
+    chmod +x "$SCRIPT_DIR/.venv/bin/testssl"
+}
+
 ensure_go() {
     if command -v go >/dev/null && "$PYTHON" -c '
 import re,subprocess,sys
@@ -170,6 +190,7 @@ PYTHON="$SCRIPT_DIR/.venv/bin/python"
 install_distro_tool whatweb whatweb
 install_distro_tool nikto nikto
 install_distro_tool testssl testssl.sh testssl
+install_fixed_testssl
 install_distro_tool sslscan sslscan
 if package_available dirsearch; then
     apt_install dirsearch

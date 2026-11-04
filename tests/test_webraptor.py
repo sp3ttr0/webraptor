@@ -167,7 +167,7 @@ class UnitTests(unittest.TestCase):
         args = w.parse_args(['https://example.com/path', '-H', 'Authorization: Bearer secret-token'])
         with tempfile.TemporaryDirectory() as temp:
             commands = {m: w.build_command(m, 'https://example.com/path', Path(temp), args)[0] for m in w.MODULES}
-        self.assertEqual(commands['curl'][:6], ['curl', '--disable', '--head', '--silent', '--show-error', '--url'])
+        self.assertEqual(commands['curl'][:7], ['curl', '--disable', '--no-styled-output', '--head', '--silent', '--show-error', '--url'])
         self.assertIn('--location', commands['curl'])
         self.assertNotIn('--insecure', commands['curl'])
         self.assertEqual(commands['waybackurls'], ['waybackurls', 'example.com'])

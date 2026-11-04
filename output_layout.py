@@ -9,6 +9,9 @@ def organize_output(folder, summary):
     folder = Path(folder)
     mapping = {}
     for path in list(folder.iterdir()):
+        if path.name == '.DS_Store' and path.is_file():
+            path.unlink()
+            continue
         if path.name in {'verification.html', 'report.html', 'summary.json', 'verification.json', 'evidence', 'logs', 'data'}:
             continue
         if path.is_dir():
@@ -36,6 +39,8 @@ def organize_output(folder, summary):
 
     summary = rewrite(summary)
     verification_path = folder/'verification.json'
+    if not verification_path.exists():
+        verification_path = folder/'data/verification.json'
     verification = rewrite(json.loads(verification_path.read_text())) if verification_path.exists() else summary.get('verification')
     if verification is None:
         verification = dict(target=summary['target'], checks=[], status=summary['status'])
