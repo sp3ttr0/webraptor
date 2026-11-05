@@ -148,22 +148,77 @@ def check_insecure_csp(s):
                   'Static policy review only; multiple policies intersect. No browser bypass or XSS was demonstrated.', False)
 
 
+def cipher_reasons(label, bits=''):
+    """Classify observed suites, without treating SHA256/384 or AEAD as weak."""
+    reasons = []
+    if re.search(r'NULL|RC4|RC2|3DES|DES-CBC|EXPORT|(?:^|[_-])MD5(?:$|[_-])|(?:^|[_-])anon|^(?:ADH|AECDH|EXP)-', label, re.I):
+        reasons.append('Weak encryption, authentication or export suite')
+    if str(bits).isdigit() and int(bits) < 128:
+        reasons.append('Encryption strength below 128 bits')
+    if 'CBC' in label.upper() or re.search(r'^(?:ECDHE|DHE|RSA|AES|CAMELLIA|SEED|DES).*-(?:SHA|SHA256|SHA384)$', label, re.I) and not re.search(r'GCM|CCM|CHACHA', label, re.I):
+        reasons.append('Deprecated CBC mode')
+    if label.startswith('TLS_RSA_WITH_') or re.match(r'^(?:AES|CAMELLIA|SEED|DES|RC4|NULL)[0-9-]', label):
+        reasons.append('Static RSA key exchange lacks forward secrecy')
+    return reasons
+
+
 def check_weak_tls_ciphers(s):
     name = 'Weak SSL/TLS Ciphers'
     if s.get('tls_not_applicable'):
         return result(name, 'not_applicable')
     accepted = s.get('ciphers', [])
     weak = []
-    for cipher in accepted:
-        label = cipher.get('cipher', '')
-        bits = cipher.get('bits', '')
-        if (re.search(r'NULL|RC4|RC2|3DES|DES-CBC|EXPORT|(?:^|[_-])MD5(?:$|[_-])|(?:^|[_-])anon|^(?:ADH|AECDH|EXP)-', label, re.I)
-                or (bits.isdigit() and int(bits) < 128)):
-            weak.append(cipher)
+    for cipher in accepted + s.get('testssl_ciphers', []):
+        reasons = cipher_reasons(cipher.get('cipher', ''), cipher.get('bits', ''))
+        if reasons:
+            weak.append(dict(cipher, reasons=reasons, source=cipher.get('source', 'sslscan')))
     if weak:
-        return result(name, 'found', weak, 'Server accepted these weak suites; coverage is limited to sslscan probes.', True)
+        return result(name, 'found', weak,
+                      'Endpoint accepted weak or deprecated suites. CBC and static RSA are configuration observations, not proof of an exploitable attack.', True)
     return result(name, 'not_found' if s.get('cipher_scan_complete') and accepted else 'unknown',
-                  note=s.get('cipher_error', 'No weak suite observed; this is not exhaustive cryptographic validation.'))
+                  note=s.get('cipher_error', 'No weak suite observed; probe coverage is not exhaustive.'))
+
+
+def collect_testssl_ciphers(s, args, folder, stop, run_command, redact):
+    """Use a fresh, endpoint-scoped structured probe; never infer acceptance from prose."""
+    if s.get('tls_not_applicable') or stop.is_set():
+        return
+    executable = shutil.which('testssl') or shutil.which('testssl.sh')
+    if not executable:
+        return
+    p = urlsplit(s['target'])
+    host, port = p.hostname, p.port or 443
+    endpoint = ('[' + host + ']' if ':' in host else host) + ':' + str(port)
+    path = folder / 'verification_testssl.json'
+    run = run_command([executable, '--quiet', '--color', '0', '--warnings', 'batch',
+                       '--nodns', 'none', '--each-cipher', '--wide', '--jsonfile', str(path), endpoint],
+                      folder / 'verification_testssl_stdout.log', folder / 'verification_testssl_stderr.log',
+                      args.tool_timeout, stop, redact)
+    try:
+        rows = json.loads(path.read_text())
+        if not isinstance(rows, list):
+            return
+        accepted = []
+        for row in rows:
+            if not isinstance(row, dict) or str(row.get('port')) != str(port):
+                continue
+            # testssl records NODE/NODEIP; exact original host must match.
+            if str(row.get('ip', '')).split('/')[0].strip('[]').lower() != host.lower():
+                continue
+            if not re.fullmatch(r'cipher(?:-(?:ssl2|ssl3|tls1|tls1_1|tls1_2|tls1_3))?_[0-9a-fA-Fx]+', row.get('id', '')):
+                continue
+            finding = row.get('finding', '')
+            if 'not a/v' in finding or 'not available' in finding.lower():
+                continue
+            # Only positive per-suite rows from --each-cipher are emitted by default.
+            match = re.search(r'(?<![A-Za-z0-9_])(?:TLS_[A-Z0-9_]+|(?:ECDHE|DHE|ADH|AECDH|AES|CAMELLIA|SEED|DES|RC4|RC2|NULL|EXP)[A-Za-z0-9_-]+)', finding)
+            if match:
+                accepted.append(dict(cipher=match.group(), source='testssl', observation=finding, probe_id=row['id']))
+        s['testssl_ciphers'] = accepted
+        s['testssl_cipher_valid'] = bool(accepted)
+        s['testssl_cipher_complete'] = run['status'] == 'completed'
+    except (OSError, ValueError, TypeError):
+        pass
 
 
 def check_tls13_disabled(s):
@@ -490,7 +545,9 @@ def render_sources(sources):
                       html.escape(str(source.get('role', 'primary'))) + ' · ' +
                       html.escape(str(source.get('status', 'unavailable'))) + '</small>' + link +
                       '<small>' + html.escape(str(source.get('method', ''))) + '</small>' +
-                      ('<small>Reused scanner artifact from a previous run.</small>' if source.get('reused') else '') + '</div>')
+                      ('<small>Reused scanner artifact from a previous run.</small>' if source.get('reused') else '') +
+                      ('<pre class="raw-evidence">' + html.escape(source['raw_output']) + '</pre>'
+                       if source.get('raw_output') else '') + '</div>')
     return ''.join(blocks) or '<span class="muted">No source recorded; evidence provenance is unavailable.</span>'
 
 
@@ -502,8 +559,9 @@ def render_report(report):
     for f in sorted(checks, key=lambda finding: finding['check']):
         rows.append('<details class="finding" data-group="' + esc(f['group']) + '"><summary>' + esc(f['check']) +
             '</summary><div class="finding-content"><div data-field="sources"><h3>Tool / probe evidence</h3>' +
-            render_sources(f.get('evidence_sources', [])) + '</div><div data-field="evidence"><h3>Evidence / limits</h3><pre>' +
-            esc(json.dumps(f['evidence'], ensure_ascii=False, indent=2)) + '</pre><p>' + esc(f['note']) +
+            render_sources(f.get('evidence_sources', [])) + '</div><div data-field="evidence"><h3>Evidence / limits</h3>' +
+            ('' if any(source.get('raw_output') for source in f.get('evidence_sources', [])) else
+             '<pre>' + esc(json.dumps(f['evidence'], ensure_ascii=False, indent=2)) + '</pre>') + '<p>' + esc(f['note']) +
             '</p><p class="muted">' + esc(f['context']) + '</p></div></div></details>')
     body = '<section class="finding-group scanner-section" id="findings-summary"><div class="findings-header"><h2>Findings Summary <span class="finding-count" aria-label="' + str(len(checks)) + ' findings">' + str(len(checks)) + '</span></h2>'
     if rows:
@@ -571,6 +629,10 @@ def attach_sources(finding, snapshot, folder, modules):
             if not snapshot.get('cipher_scan_complete'):
                 primary['status'] = 'partial'
     sources = [primary]
+    if name == 'Weak SSL/TLS Ciphers' and snapshot.get('testssl_cipher_valid'):
+        sources.append(dict(tool='testssl', artifact='verification_testssl.json', role='primary',
+                            status='captured' if snapshot.get('testssl_cipher_complete') else 'partial',
+                            method='Fresh endpoint-matched accepted per-suite JSON observations.'))
     for module in modules:
         if module.get('module') not in ({'sslscan', 'testssl'} if is_tls else {'curl'}):
             continue
@@ -586,6 +648,18 @@ def attach_sources(finding, snapshot, folder, modules):
                 method=('HEAD response; may contain redirects. Not independently correlated with this GET check.'
                         if module['module'] == 'curl' else 'Scanner output; not independently correlated with this check.'),
                 sha256=sha256(path.read_bytes()).hexdigest()))
+    # Embed saved, already-redacted scanner output verbatim, never reconstructed rows.
+    raw_sources = []
+    for tool in ('sslscan', 'testssl') if is_tls else ():
+        filename = 'verification_tls_stdout.log' if tool == 'sslscan' else 'verification_testssl_stdout.log'
+        path = folder / filename
+        if path.is_file() and path.resolve().is_relative_to(folder.resolve()):
+            output = path.read_text(encoding='utf-8', errors='replace')
+            if output.strip():
+                raw_sources.append(dict(tool=tool, artifact=filename, role='raw scanner output',
+                                        status='captured', method='Saved probe stdout, with configured secrets redacted.',
+                                        raw_output=output))
+    sources.extend(raw_sources)
     for source in sources:
         artifact = source.get('artifact')
         if artifact and (folder / artifact).is_file():
@@ -599,7 +673,8 @@ def assess_target(target, args, folder, stop, run_command, redact, modules=()):
     """Run fresh verification inside a normal target workflow, including resume."""
     snapshot = collect_http(target, args, stop)
     collect_tls(snapshot, args, folder, stop, run_command, redact)
-    for path in folder.glob('verification_tls*'):
+    collect_testssl_ciphers(snapshot, args, folder, stop, run_command, redact)
+    for path in list(folder.glob('verification_tls*')) + list(folder.glob('verification_testssl*')):
         if path.is_file():
             path.write_text(redact(path.read_text(encoding='utf-8', errors='replace')), encoding='utf-8')
     capture_sources(snapshot, folder, redact)

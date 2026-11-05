@@ -106,6 +106,51 @@ class FindingChecks(unittest.TestCase):
         self.assertFalse(r['verified'])
         self.assertEqual(v.check_breach(snapshot([('content-encoding', 'identity')]))['status'], 'not_found')
 
+    def test_raw_tls_evidence_is_verbatim_escaped_and_linked(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            raw = 'Accepted TLSv1.2 128 bits AES128-SHA <unsafe>&\n'
+            (folder/'verification_tls_stdout.log').write_text(raw)
+            finding = v.check_weak_tls_ciphers(snapshot(ciphers=[dict(cipher='AES128-SHA')]))
+            attached = v.attach_sources(finding, snapshot(), folder, [])
+            self.assertEqual(attached['evidence_sources'][-1]['raw_output'], raw)
+            rendered = v.render_report(dict(target='https://example.test/', checks=[attached]))
+            self.assertIn('AES128-SHA &lt;unsafe&gt;&amp;', rendered)
+            self.assertNotIn('<unsafe>', rendered)
+            self.assertIn('verification_tls_stdout.log', rendered)
+            self.assertNotIn('&quot;reasons&quot;', rendered)
+
+    def test_deprecated_cipher_classification_and_modern_controls(self):
+        for label in ('AES128-SHA', 'AES256-GCM-SHA384', 'ECDHE-RSA-AES128-SHA256',
+                      'TLS_RSA_WITH_AES_128_GCM_SHA256', 'TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256'):
+            finding = v.check_weak_tls_ciphers(snapshot(ciphers=[dict(cipher=label, bits='128')]))
+            self.assertTrue(finding['verified'], label)
+        for label in ('TLS_AES_128_GCM_SHA256', 'ECDHE-RSA-AES128-GCM-SHA256', 'ECDHE-RSA-CHACHA20-POLY1305'):
+            self.assertFalse(v.cipher_reasons(label, '128'), label)
+
+    def test_testssl_cipher_evidence_requires_matching_endpoint_and_positive_suite(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            def runner(cmd, *unused):
+                rows = [dict(id='cipher_x2f', ip='example.test/192.0.2.1', port='443',
+                             finding='TLS 1.2  x002f AES128-SHA RSA AES 128')]
+                rows += [dict(rows[0], ip='other.test/192.0.2.1'),
+                         dict(rows[0], port='444'), dict(rows[0], id='cipherlist'),
+                         dict(rows[0], finding='TLS 1.2 x002f RC4-SHA not a/v')]
+                (folder/'verification_testssl.json').write_text(json.dumps(rows))
+                return dict(status='timed_out')
+            s = snapshot()
+            with patch.object(v.shutil, 'which', return_value='testssl'):
+                v.collect_testssl_ciphers(s, args(), folder, threading.Event(), runner, lambda x:x)
+            finding = v.check_weak_tls_ciphers(s)
+            self.assertTrue(finding['verified'])
+            self.assertEqual(len(finding['evidence']), 1)
+            self.assertEqual(finding['evidence'][0]['source'], 'testssl')
+            self.assertFalse(s['testssl_cipher_complete'])
+            attached = v.attach_sources(finding, s, folder, [])
+            self.assertEqual(attached['evidence_sources'][-1]['status'], 'partial')
+            self.assertIn('Weak SSL/TLS Ciphers', v.render_report(dict(target=s['target'], checks=[attached])))
+
     def test_tls_positive_negative_incomplete_and_not_applicable(self):
         for name, bits in [('TLS_RSA_WITH_3DES_EDE_CBC_SHA', '112'), ('ADH-AES256-SHA', '256'), ('RC4-SHA', '128')]:
             s = snapshot(ciphers=[dict(cipher=name, bits=bits)])

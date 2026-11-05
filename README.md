@@ -65,7 +65,7 @@ Scanners run simultaneously (up to six; adjust with `--threads`). The compact te
 
 Reports and raw evidence are saved under `results/`. Open a target's **`report.html`** for collapsible scanner results, linked URLs, and verified findings. **`data/verification.json`** contains the complete check record. Each target run contains only `report.html`, `data/`, `evidence/`, and `logs/`. Keep them together so evidence links work. Single-target resume information lives in `data/run.json`; no `_runs/` folder is created. Multi-target session reports and resume manifests remain under `results/_runs/<run-id>/`. Existing session manifests still work.
 
-The **22 automatic checks** cover security headers, TLS protocols and ciphers, certificates, and compression indicators. Automatic TLS verification needs sslscan even when its standalone module is excluded.
+The **22 automatic checks** cover security headers, TLS protocols and ciphers, certificates, and compression indicators. Automatic TLS verification uses sslscan XML and a focused testssl per-cipher JSON probe, even when their standalone modules are excluded. Weak/deprecated suites include CBC mode and static RSA key exchange; these observations do not prove exploitability. Missing or incomplete probes remain inconclusive unless an accepted weak/deprecated suite is observed.
 
 **Verified means observed, not successfully exploited.** Potential and unknown checks remain in JSON; an empty Findings Summary does not prove the target is secure. Reports assign no severity ratings or remediation steps. Review scanner matches and evidence before acting or sharing; secret redaction is not comprehensive.
 
