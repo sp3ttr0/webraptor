@@ -489,12 +489,29 @@ class LiveOutputTests(unittest.TestCase):
                 w.print_completion(results, Path('/tmp/batch'), 12.5, cancelled)
             text = stream.getvalue()
             self.assertIn(expected, text)
-            self.assertIn('/tmp/demo/report.html', text)
-            self.assertIn('/tmp/demo/logs', text)
+            self.assertIn('WebRaptor is exiting', text)
+            self.assertLess(text.index('Hunt Smarter, Not Harder.'), text.index('WebRaptor is exiting'))
+            self.assertIn('  WebRaptor is exiting.\n', text)
+
+            self.assertEqual(text.count('/tmp/demo'), 1)
+            self.assertIn('Report     report.html', text)
+            self.assertIn('Logs       logs/', text)
             self.assertIn('/tmp/batch/run.json', text)
             self.assertNotIn('\x1b', text)
             if status != 'completed':
                 self.assertNotIn('reports ready', text)
+
+    def test_completion_single_target_tree_and_readable_duration(self):
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            w.print_completion([dict(status='incomplete', run_directory='/tmp/demo')], None, 1952.7,
+                               manifest_path=Path('/tmp/demo/data/run.json'))
+        text = stream.getvalue()
+        self.assertEqual(text.count('/tmp/demo'), 1)
+        self.assertIn('Elapsed  32m 32s', text)
+        self.assertIn('Resume     data/run.json', text)
+        self.assertIn('Partial results saved', text)
+        self.assertNotIn('Session folder', text)
 
     def test_panel_state_colors_and_no_color_preference(self):
         class Terminal(io.StringIO):

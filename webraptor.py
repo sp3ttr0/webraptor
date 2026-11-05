@@ -802,25 +802,43 @@ def print_completion(results, batch_folder, elapsed, cancelled=False, manifest_p
     width = min(76, max(1, shutil.get_terminal_size((80, 24)).columns - 1))
     def emit(text, shade=''):
         print(shade + text + Style.RESET_ALL if color and shade else text)
+    seconds = max(0, int(elapsed))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    duration = (f'{hours}h ' if hours else '') + (f'{minutes}m ' if minutes or hours else '') + f'{seconds}s'
     emit('')
     emit('─' * width, Fore.CYAN)
-    emit('  WEBRAPTOR  /  ' + title, tone)
-    emit(f'  Targets completed: {complete}/{len(results)}  ·  Elapsed: {elapsed:.1f}s')
+    emit('  WEBRAPTOR · ' + title.split(' · ')[0], tone)
+    emit(f'  Completed targets  {complete}/{len(results)}    Elapsed  {duration}')
+    if complete != len(results) or cancelled:
+        emit('  Partial results saved. Review scanner evidence and logs.', Fore.YELLOW)
     emit('─' * width, Fore.CYAN)
-    for result in results:
+    manifest = Path(manifest_path) if manifest_path is not None else Path(batch_folder)/'run.json'
+    for index, result in enumerate(results, 1):
         folder = Path(result['run_directory'])
-        emit('  Report', Fore.CYAN)
-        emit('    ' + str(folder / 'report.html'))
-        emit('  Evidence & logs', Fore.CYAN)
-        emit('    ' + str(folder / 'evidence'))
-        emit('    ' + str(folder / 'logs'))
+        emit('')
+        emit('  Output folder' + (f' · Target {index}' if len(results) > 1 else ''), Fore.CYAN)
+        emit('  ' + str(folder))
+        emit('    ├─ Report     report.html', Fore.CYAN)
+        emit('    ├─ Evidence   evidence/')
+        emit('    ├─ Logs       logs/')
+        if manifest.is_relative_to(folder):
+            emit('    └─ Resume     ' + str(manifest.relative_to(folder)))
+        else:
+            emit('    └─ Data       data/')
     if len(results) > 1:
-        emit('  Batch report', Fore.CYAN)
-        emit('    ' + str(batch_folder / 'report.html'))
-    emit('  Resume manifest', Fore.CYAN)
-    emit('    ' + str(manifest_path if manifest_path is not None else batch_folder/'run.json'))
+        emit('')
+        emit('  Session folder', Fore.CYAN)
+        emit('  ' + str(batch_folder))
+        emit('    ├─ Report     report.html')
+        emit('    └─ Resume     ' + (str(manifest.relative_to(batch_folder)) if manifest.is_relative_to(batch_folder) else str(manifest)))
+    elif not manifest.is_relative_to(Path(results[0]['run_directory'])):
+        emit('')
+        emit('  Resume manifest', Fore.CYAN)
+        emit('  ' + str(manifest))
     emit('')
     emit('  Hunt Smarter, Not Harder.', Fore.CYAN)
+    emit('  WebRaptor is exiting.', tone)
     emit('')
 
 
