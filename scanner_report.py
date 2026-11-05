@@ -87,10 +87,18 @@ def render_scanner_results(results):
                 links.append('<a href="' + esc(quote(artifact, safe='/')) + '">' + esc(artifact) + '</a>')
         content = ''
         if key == 'nuclei' and item.get('findings'):
-            content = '<div class="scanner-matches">' + ''.join(
-                '<article><strong>' + esc(f.get('name', 'Unnamed match')) + '</strong><small>' +
-                esc(f.get('template_id', '')) + '</small><p>' + esc(f.get('matched_at', '')) + '</p></article>'
-                for f in item['findings']) + '</div>'
+            entries = []
+            severity_order = {name: rank for rank, name in enumerate(('critical', 'high', 'medium', 'low', 'info'))}
+            for finding in sorted(item['findings'], key=lambda match: severity_order.get(str(match.get('severity', 'unknown')).lower(), 5)):
+                url = str(finding.get('matched_at', ''))
+                parsed = urlsplit(url)
+                target = ('<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(url) + '</a>'
+                          if parsed.scheme.lower() in ('http', 'https') and parsed.netloc else '<span>' + esc(url) + '</span>')
+                severity = str(finding.get('severity', 'unknown')).lower()
+                severity_class = severity if severity in ('critical', 'high', 'medium', 'low', 'info', 'unknown') else 'unknown'
+                entries.append('<li><div class="nuclei-match-title"><span class="nuclei-severity severity-' + severity_class + '">' + esc(severity) + '</span><strong>' + esc(finding.get('name', 'Unnamed match')) +
+                               '</strong><code>' + esc(finding.get('template_id', '')) + '</code></div>' + target + '</li>')
+            content = '<ul class="nuclei-results" aria-label="Nuclei matches">' + ''.join(entries) + '</ul>'
         elif key == 'waybackurls' and output.strip():
             urls = list(dict.fromkeys(line.strip() for line in output.splitlines() if line.strip()))
             content = '<p class="muted">' + str(len(urls)) + ' archived URL entries shown; historical URLs may no longer exist.</p><ol class="scanner-urls">' + ''.join('<li>' + ('<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(url) + '</a>' if urlsplit(url).scheme.lower() in ('http', 'https') and urlsplit(url).netloc else '<span>' + esc(url) + '</span>') + '</li>' for url in urls) + '</ol>'
