@@ -19,8 +19,9 @@ with tempfile.TemporaryDirectory() as t:
  threading.Thread(target=server.serve_forever,daemon=True).start()
  target=f'https://127.0.0.1:{server.server_port}/'
  folder=ROOT/'results/cipher-verification-demo'/__import__('datetime').datetime.now().strftime('%Y%m%dT%H%M%S%f');folder.mkdir(parents=True)
- a=SimpleNamespace(headers=[],insecure=True,probe_timeout=3,tool_timeout=240)
- report=v.assess_target(target,a,folder,threading.Event(),w.run_command,w.Redactor())
+ a=w.parse_args([target,'--modules','sslscan,testssl','--insecure','--tool-timeout','240'])
+ modules=[w.execute_module(module,target,folder,a,threading.BoundedSemaphore(1),threading.Event(),w.Redactor()) for module in a.modules]
+ report=v.assess_target(target,a,folder,threading.Event(),w.run_command,w.Redactor(),modules)
  checks=json.loads((folder/'verification.json').read_text())['checks']
  finding=next(c for c in checks if c['check']=='Weak SSL/TLS Ciphers')
  print(json.dumps(finding,indent=2),flush=True)
@@ -28,6 +29,6 @@ with tempfile.TemporaryDirectory() as t:
  assert {'sslscan','testssl'} <= {e['source'] for e in finding['evidence']}
  assert 'Weak SSL/TLS Ciphers' in (folder/'report.html').read_text()
  from output_layout import organize_output
- organize_output(folder, dict(target=target, status=report['status'], modules=[], verification=report))
+ organize_output(folder, dict(target=target, status=report['status'], modules=modules, verification=report))
  print('Report:', folder/'report.html', flush=True)
  server.shutdown()

@@ -202,7 +202,10 @@ class UnitTests(unittest.TestCase):
         self.assertIn('-Add-header', commands['nikto'])
         self.assertEqual(commands['testssl'][-1], 'example.com:443')
         self.assertIn('--reqheader', commands['testssl'])
-        self.assertEqual(commands['sslscan'], ['sslscan', '--no-colour', 'example.com:443'])
+        self.assertEqual(commands['sslscan'], ['sslscan', '--no-colour', '--xml=' + str(Path(temp)/'sslscan_results.xml'), 'example.com:443'])
+        self.assertIn('--jsonfile', commands['testssl'])
+        self.assertIn(str(Path(temp)/'testssl_results.json'), commands['testssl'])
+        self.assertIn('--wide', commands['testssl'])
         for module in w.AUTH_MODULES:
             self.assertIn('Authorization: Bearer secret-token', commands[module])
         self.assertNotIn('Authorization: Bearer secret-token', commands['waybackurls'])

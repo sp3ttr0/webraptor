@@ -2,6 +2,7 @@
 Nikto uses tests(report:10) with a 20-second limit. testssl selects protocols,
 server defaults and HTTP headers. Pass --full-checks to run only Nikto and testssl with their full default checks.
 Pass --all-full-checks for all eight modules with full Nikto/testssl checks.
+Pass --evidence-checks for all eight modules with full testssl, Nikto headers, and a scanner-reuse audit.
 Normal CLI defaults are unchanged.
 """
 import json
@@ -17,6 +18,7 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
+EVIDENCE_CHECKS = '--evidence-checks' in sys.argv
 RESUMPTION_CHECKS = '--resumption-checks' in sys.argv
 ALL_FULL_CHECKS = '--all-full-checks' in sys.argv
 FULL_CHECKS = '--full-checks' in sys.argv or RESUMPTION_CHECKS or ALL_FULL_CHECKS
@@ -29,7 +31,7 @@ class Target(BaseHTTPRequestHandler):
     server_version = 'Apache/2.4.49'
     sys_version = ''
     def do_GET(self):
-        time.sleep(0 if FULL_CHECKS else .15)
+        time.sleep(0 if FULL_CHECKS or EVIDENCE_CHECKS else .15)
         known = self.path == '/' or self.path.startswith('/page') or self.path == '/backup.txt'
         body = (b'<title>All eight local demo</title><meta name="generator" content="WordPress 6.0">WEBRAPTOR_LOCAL_DEMO_BACKUP'
                 if known else b'Generic missing page')
@@ -94,8 +96,11 @@ with tempfile.TemporaryDirectory() as temp:
     os.environ['RUBYOPT'] = (os.environ.get('RUBYOPT', '') + ' -r' + str(ruby_compat)).strip()
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(cert,key)
+    if EVIDENCE_CHECKS:
+        context.maximum_version = ssl.TLSVersion.TLSv1_2
+        context.set_ciphers('AES128-SHA:ECDHE-RSA-AES128-GCM-SHA256:@SECLEVEL=0')
     with LocalServer(('127.0.0.1',0),Target) as server, ThreadingHTTPServer(('127.0.0.1',0),ArchiveProxy) as proxy:
-        output = ROOT/('results/all-eight-full-https-demo' if ALL_FULL_CHECKS else 'results/testssl-resumption-demo' if RESUMPTION_CHECKS else 'results/full-nikto-testssl-demo' if FULL_CHECKS else 'results/all-modules-https-demo')/time.strftime('%Y%m%dT%H%M%S')
+        output = ROOT/('results/all-eight-evidence-demo' if EVIDENCE_CHECKS else 'results/all-eight-full-https-demo' if ALL_FULL_CHECKS else 'results/testssl-resumption-demo' if RESUMPTION_CHECKS else 'results/full-nikto-testssl-demo' if FULL_CHECKS else 'results/all-modules-https-demo')/time.strftime('%Y%m%dT%H%M%S')
         output.mkdir(parents=True)
         (output/'logs').mkdir()
         (output/'data').mkdir()
@@ -131,9 +136,11 @@ http:
         original_build = w.build_command
         def bounded_command(module, target, folder, args):
             cmd, artifact = original_build(module,target,folder,args)
-            if module == 'nikto' and not FULL_CHECKS:
+            if module == 'nikto' and EVIDENCE_CHECKS:
+                cmd += ['-Plugins', 'headers']
+            if module == 'nikto' and not FULL_CHECKS and not EVIDENCE_CHECKS:
                 cmd += ['-Plugins','tests(report:10)','-maxtime','20']
-            if module == 'testssl' and not FULL_CHECKS:
+            if module == 'testssl' and not FULL_CHECKS and not EVIDENCE_CHECKS:
                 cmd[-1:-1] = ['--nodns','none','-p','-S','-h']
             if module == 'testssl' and FULL_CHECKS:
                 original_backend = Path('/opt/homebrew/opt/openssl@4/bin/openssl')
@@ -144,7 +151,9 @@ http:
             return cmd,artifact
         w.build_command = bounded_command
         print('LOCAL HTTPS TARGET:',target)
-        if RESUMPTION_CHECKS:
+        if EVIDENCE_CHECKS:
+            print('All eight modules; full testssl checks; Nikto headers plugin; scanner-reuse audit.')
+        elif RESUMPTION_CHECKS:
             print('Focused native testssl server-default/session-resumption check, with the upstream fix.')
         elif ALL_FULL_CHECKS:
             print('All eight installed modules; full native Nikto and testssl checks; eight scanner slots.')
@@ -158,8 +167,15 @@ http:
         print('The Apache/WordPress fingerprints and Nuclei marker are synthetic fixture data.')
         try:
             selection = ['--modules','testssl'] if RESUMPTION_CHECKS else ['--modules','nikto,testssl'] if FULL_CHECKS and not ALL_FULL_CHECKS else []
+            scanner_calls = []
+            original_run = w.run_command
+            def recorded_run(cmd, *args, **kwargs):
+                if Path(cmd[0]).name in ('testssl', 'testssl.sh', 'sslscan'):
+                    scanner_calls.append(list(cmd))
+                return original_run(cmd, *args, **kwargs)
+            w.run_command = recorded_run
             result = w.main([target,'--insecure','--threads','2' if FULL_CHECKS and not ALL_FULL_CHECKS else '8',
-                '--tool-timeout','1800' if FULL_CHECKS else '180',*selection,
+                '--tool-timeout','1800' if FULL_CHECKS else '600' if EVIDENCE_CHECKS else '180',*selection,
                 '--nikto-pause','.001','--dirsearch-threads','2','--dirsearch-rate','10',
                 '--wordlist',str(paths),'--nuclei-template',str(template),'--nuclei-rate','5',
                 '--output-dir',str(output)])
@@ -176,10 +192,18 @@ http:
                 summary = json.loads(summary_path.read_text())
                 summary['verification'] = report
                 w.write_json(summary_path, summary)
+            if EVIDENCE_CHECKS:
+                assert sum(Path(cmd[0]).name in ('testssl','testssl.sh') for cmd in scanner_calls) == 1, scanner_calls
+                assert sum(Path(cmd[0]).name == 'sslscan' for cmd in scanner_calls) == 1, scanner_calls
+                assert all(not any('verification_' in arg for arg in cmd) for cmd in scanner_calls)
+                w.write_json(output/'data/tls_scanner_calls.json', scanner_calls)
+                print('TLS SCANNER AUDIT: testssl=1 sslscan=1; verification launched neither again.', flush=True)
+                print('EVIDENCE DEMO OUTPUT:', output, flush=True)
             # Persist the fixture scope alongside the reports.
             w.write_json(output/'data/demo_scope.json',{'target':target,'sample_archive_data':ALL_FULL_CHECKS or not FULL_CHECKS,
-                'nikto_limit_seconds':None if FULL_CHECKS else 20,
-                'testssl_checks':'server defaults and session resumption' if RESUMPTION_CHECKS else 'full defaults' if FULL_CHECKS else ['protocols','server defaults','HTTP headers'],
+                'nikto_limit_seconds':None if FULL_CHECKS or EVIDENCE_CHECKS else 20,
+                'nikto_profile':'headers' if EVIDENCE_CHECKS else 'full defaults' if FULL_CHECKS else 'tests(report:10)',
+                'testssl_checks':'server defaults and session resumption' if RESUMPTION_CHECKS else 'full defaults' if FULL_CHECKS or EVIDENCE_CHECKS else ['protocols','server defaults','HTTP headers'],
                 'modules':['testssl'] if RESUMPTION_CHECKS else ['nikto','testssl'] if FULL_CHECKS and not ALL_FULL_CHECKS else list(w.MODULES)})
         finally:
             server.shutdown()

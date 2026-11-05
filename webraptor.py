@@ -1136,9 +1136,9 @@ def build_command(module, target, folder, args):
         if args.insecure:
             cmd.append('--insecure')
     elif module == 'testssl':
-        cmd = [tool_executable('testssl') or 'testssl', '--quiet', '--color', '0', '--warnings', 'batch']
+        cmd = [tool_executable('testssl') or 'testssl', '--quiet', '--color', '0', '--warnings', 'batch', '--wide', '--jsonfile', str(folder/'testssl_results.json')]
     elif module == 'sslscan':
-        cmd = ['sslscan', '--no-colour', tls_endpoint(target)]
+        cmd = ['sslscan', '--no-colour', '--xml=' + str(folder/'sslscan_results.xml'), tls_endpoint(target)]
     elif module == 'whatweb':
         cmd = ['whatweb', '-v', '--color=never', '--max-threads=1',
                '--wait=' + str(args.whatweb_wait), '--follow-redirect=never', target]
@@ -1245,7 +1245,11 @@ def execute_module(module, target, folder, args, slots, stop, redact, progress_t
                 result.update(status='failed', error='Nuclei output missing or invalid; findings may be incomplete')
         elif module == 'dirsearch' and result['status'] == 'completed' and not artifact.exists():
             result.update(status='failed', error='Expected scanner output is missing')
-        result['artifacts'] = list(dict.fromkeys(str(p.relative_to(folder)) for p in (artifact, stdout, stderr) if p.exists()))
+        sidecars = [folder/'sslscan_results.xml'] if module == 'sslscan' else [folder/'testssl_results.json'] if module == 'testssl' else []
+        for sidecar in sidecars:
+            if sidecar.is_file():
+                redact_artifact(sidecar, redact)
+        result['artifacts'] = list(dict.fromkeys(str(p.relative_to(folder)) for p in (artifact, stdout, stderr, *sidecars) if p.exists()))
         result['artifact_hashes'] = {p: file_digest(folder / p) for p in result['artifacts'] if (folder / p).is_file()}
         return result
     except Exception as exc:

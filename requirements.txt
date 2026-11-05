@@ -11,7 +11,7 @@ httpx>=0.27,<1
 # These are NOT PyPI requirements; install through your distribution's package
 # manager or the official upstream installer. pip cannot install the full toolset.
 # All eight are needed for the default scan; --modules/--exclude select scanner
-# modules. Automatic verification also uses sslscan independently of selection.
+# modules. TLS verification reuses the selected scanners' structured artifacts.
 #
 # curl         https://curl.se/
 # whatweb      https://github.com/urbanadventurer/WhatWeb

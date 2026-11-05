@@ -106,6 +106,59 @@ class FindingChecks(unittest.TestCase):
         self.assertFalse(r['verified'])
         self.assertEqual(v.check_breach(snapshot([('content-encoding', 'identity')]))['status'], 'not_found')
 
+    def test_curl_headers_in_supporting_files_preserve_get_verification(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            raw = "HTTP/1.1 302 Found\nLocation: /final\n\nHTTP/1.1 200 OK\nContent-Security-Policy: default-src 'none'\nX-Test: <unsafe>\n"
+            (folder/'curl_results.txt').write_text(raw)
+            s = snapshot()
+            s['http_status'] = 302
+            finding = v.attach_sources(v.check_csp_missing(s), s, folder,
+                       [dict(module='curl',status='completed',artifacts=['curl_results.txt'])])
+            self.assertTrue(finding['verified'])
+            self.assertEqual(finding['status'], 'found')
+            self.assertEqual(finding['evidence_sources'][1]['raw_output'], raw)
+            rendered = v.render_report(dict(target=s['target'], checks=[finding]))
+            self.assertNotIn('curl · Raw evidence', rendered)
+            self.assertIn('class="evidence-viewer supporting-files"><summary>Supporting files', rendered)
+            self.assertIn('HEAD · Redirects followed', rendered)
+            self.assertIn('GET of the exact target URL', rendered)
+            self.assertNotIn('Additional evidence: curl sends', rendered)
+            self.assertIn('&quot;http_status&quot;: 302', rendered)
+            self.assertIn('&lt;unsafe&gt;', rendered)
+            self.assertNotIn('<unsafe>', rendered)
+
+    def test_registered_tls_artifacts_are_reused_without_scanner_processes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            xml = folder/'sslscan_results.xml'
+            xml.write_text('<document><ssltest host="example.test" port="443"><cipher status="accepted" cipher="AES128-SHA" bits="128"/></ssltest></document>')
+            js = folder/'testssl_results.json'
+            js.write_text(json.dumps([dict(id='cipher-tls1_2_x2f', ip='example.test/192.0.2.1', port='443', finding='TLS 1.2 x2f AES128-SHA RSA AES 128')]))
+            modules = [dict(module=tool, status='completed', artifacts=[path.name],
+                            artifact_hashes={path.name:hashlib.sha256(path.read_bytes()).hexdigest()})
+                       for tool,path in [('sslscan',xml),('testssl',js)]]
+            runner = Mock(side_effect=AssertionError('duplicate scanner process'))
+            s = snapshot()
+            with patch.object(v.socket, 'create_connection', side_effect=OSError()):
+                v.collect_tls(s, args(), folder, threading.Event(), runner, lambda x:x, modules)
+            v.collect_testssl_ciphers(s, args(), folder, threading.Event(), runner, lambda x:x, modules)
+            runner.assert_not_called()
+            finding = v.check_weak_tls_ciphers(s)
+            self.assertTrue(finding['verified'])
+            self.assertEqual({e['source'] for e in finding['evidence']}, {'sslscan','testssl'})
+            attached = v.attach_sources(finding,s,folder,modules)
+            self.assertEqual(attached['evidence_sources'][0]['artifact'], xml.name)
+            self.assertEqual(attached['evidence_sources'][1]['artifact'], js.name)
+            xml.write_text('<tampered/>')
+            self.assertIsNone(v.scanner_artifact(folder,modules,'sslscan','.xml')[0])
+            s = snapshot()
+            with patch.object(v.socket, 'create_connection', side_effect=OSError()):
+                v.collect_tls(s,args(),folder,threading.Event(),runner,lambda x:x,[])
+            v.collect_testssl_ciphers(s,args(),folder,threading.Event(),runner,lambda x:x,[])
+            runner.assert_not_called()
+            self.assertEqual(v.check_weak_tls_ciphers(s)['status'],'unknown')
+
     def test_all_tls_checks_prefer_full_testssl_and_support_sslscan_fallback(self):
         names = ('Weak SSL/TLS Ciphers', 'TLSv1.3 Disabled', 'Wildcard SSL Certificates in Use',
                  'SSLv2 Enabled', 'SSLv3 Enabled', 'TLSv1.0 Enabled', 'TLSv1.1 Enabled',

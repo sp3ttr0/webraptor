@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 import webraptor as w
 import verification as v
+from unittest.mock import patch
 from output_layout import organize_output
 
 TLS_CHECKS = {'Weak SSL/TLS Ciphers', 'TLSv1.3 Disabled', 'Wildcard SSL Certificates in Use',
@@ -43,15 +44,26 @@ with tempfile.TemporaryDirectory() as temp:
         folder.mkdir(parents=True)
         args = w.parse_args([target, '--modules', 'testssl,sslscan', '--insecure', '--tool-timeout', '600'])
         stop, redact = threading.Event(), w.Redactor()
+        quick = '--quick-ciphers' in sys.argv
+        original_build = w.build_command
+        def build(module, url, path, options):
+            cmd, artifact = original_build(module, url, path, options)
+            if quick and module == 'testssl':
+                cmd[-1:-1] = ['-P', '--nodns', 'none']
+            return cmd, artifact
         try:
             modules = []
-            with w.Progress([(target, True)], args.modules) as panel:
+            with patch.object(w, 'build_command', side_effect=build), w.Progress([(target, True)], args.modules) as panel:
                 args.progress = panel
                 for module in args.modules:
                     modules.append(w.execute_module(module, target, folder, args, threading.BoundedSemaphore(1), stop, redact))
             assert all(module['status'] == 'completed' for module in modules), modules
-            print('Full native scanner checks completed', flush=True)
-            report = v.assess_target(target, args, folder, stop, w.run_command, redact, modules)
+            print('Native scanner checks completed (focused ciphers)' if quick else 'Full native scanner checks completed', flush=True)
+            def no_duplicate_scanner(*args, **kwargs):
+                raise AssertionError('Verification launched a duplicate scanner')
+            report = v.assess_target(target, args, folder, stop, no_duplicate_scanner, redact, modules)
+            cipher = next(check for check in report['checks'] if check['check'] == 'Weak SSL/TLS Ciphers')
+            assert cipher['verified'] and {'sslscan', 'testssl'} <= {item['source'] for item in cipher['evidence']}, cipher
             audit = []
             for finding in report['checks']:
                 if finding['check'] not in TLS_CHECKS: continue

@@ -179,21 +179,47 @@ def check_weak_tls_ciphers(s):
                   note=s.get('cipher_error', 'No weak suite observed; probe coverage is not exhaustive.'))
 
 
-def collect_testssl_ciphers(s, args, folder, stop, run_command, redact):
-    """Use a fresh, endpoint-scoped structured probe; never infer acceptance from prose."""
+def scanner_artifact(folder, modules, tool, suffix):
+    """Only consume registered artifacts inside this target run; validate saved digests."""
+    from hashlib import sha256
+    module = next((item for item in modules if item.get('module') == tool), None)
+    if module is None:
+        return None, None
+    for relative in module.get('artifacts', []):
+        if not isinstance(relative, str) or Path(relative).is_absolute() or '..' in Path(relative).parts:
+            continue
+        path = folder/relative
+        if not relative.endswith(suffix) or path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(folder.resolve()):
+            continue
+        digest = module.get('artifact_hashes', {}).get(relative)
+        if digest and sha256(path.read_bytes()).hexdigest() != digest:
+            continue
+        return path, module
+    return None, module
+
+
+def collect_testssl_ciphers(s, args, folder, stop, run_command, redact, modules=None):
+    """Consume endpoint-scoped structured evidence; never infer acceptance from prose."""
     if s.get('tls_not_applicable') or stop.is_set():
-        return
-    executable = shutil.which('testssl') or shutil.which('testssl.sh')
-    if not executable:
         return
     p = urlsplit(s['target'])
     host, port = p.hostname, p.port or 443
-    endpoint = ('[' + host + ']' if ':' in host else host) + ':' + str(port)
-    path = folder / 'verification_testssl.json'
-    run = run_command([executable, '--quiet', '--color', '0', '--warnings', 'batch',
-                       '--nodns', 'none', '--each-cipher', '--wide', '--jsonfile', str(path), endpoint],
-                      folder / 'verification_testssl_stdout.log', folder / 'verification_testssl_stderr.log',
-                      args.tool_timeout, stop, redact)
+    if modules is not None:
+        path, module = scanner_artifact(folder, modules, 'testssl', '.json')
+        if path is None:
+            return
+        run = module
+        s['testssl_cipher_artifact'] = str(path.relative_to(folder))
+    else:
+        executable = shutil.which('testssl') or shutil.which('testssl.sh')
+        if not executable:
+            return
+        endpoint = ('[' + host + ']' if ':' in host else host) + ':' + str(port)
+        path = folder / 'verification_testssl.json'
+        run = run_command([executable, '--quiet', '--color', '0', '--warnings', 'batch',
+                           '--nodns', 'none', '--each-cipher', '--wide', '--jsonfile', str(path), endpoint],
+                          folder / 'verification_testssl_stdout.log', folder / 'verification_testssl_stderr.log',
+                          args.tool_timeout, stop, redact)
     try:
         rows = json.loads(path.read_text())
         if not isinstance(rows, list):
@@ -409,7 +435,7 @@ def collect_http(target, args, stop):
     return s
 
 
-def collect_tls(s, args, folder, stop, run_command, redact):
+def collect_tls(s, args, folder, stop, run_command, redact, modules=None):
     p = urlsplit(s['target'])
     if p.scheme != 'https':
         s['tls_not_applicable'] = True
@@ -445,13 +471,23 @@ def collect_tls(s, args, folder, stop, run_command, redact):
         s['tls13_evidence'] = [dict(error=exc.reason)]
     except (OSError, ValueError, AttributeError) as exc:
         s['tls13_evidence'] = [dict(error=type(exc).__name__)]
-    executable = shutil.which('sslscan')
-    if executable and not stop.is_set():
+    if modules is not None:
+        path, run = scanner_artifact(folder, modules, 'sslscan', '.xml')
+        if path is None:
+            s['cipher_error'] = 'No usable registered sslscan XML; no duplicate scan was launched.'
+            return
+        s['cipher_artifact'] = str(path.relative_to(folder))
+    else:
+        executable = shutil.which('sslscan')
+        if not executable or stop.is_set():
+            s['cipher_error'] = 'sslscan is unavailable or the run was cancelled.'
+            return
         endpoint = ('[' + host + ']' if ':' in host else host) + ':' + str(port)
         path = folder / 'verification_tls.xml'
         run = run_command([executable, '--no-colour', '--xml=' + str(path), endpoint],
                           folder / 'verification_tls_stdout.log', folder / 'verification_tls_stderr.log',
                           args.tool_timeout, stop, redact)
+    if path:
         s['cipher_scan_complete'] = run['status'] == 'completed'
         try:
             root = ET.parse(path).getroot()
@@ -473,8 +509,6 @@ def collect_tls(s, args, folder, stop, run_command, redact):
         except (OSError, ET.ParseError, ValueError):
             s['cipher_scan_complete'] = False
             s['cipher_error'] = 'Missing, invalid or mismatched sslscan XML.'
-    else:
-        s['cipher_error'] = 'sslscan is unavailable or the run was cancelled.'
 
 
 # Per-check context; risk ratings and remediation are intentionally omitted.
@@ -556,7 +590,7 @@ def render_sources(sources, compact=False):
                       ('<pre class="raw-evidence">' + html.escape(source['raw_output']) + '</pre>'
                        if source.get('raw_output') else '') + '</div>')
     if compact:
-        candidates = [source for source in sources if source.get('raw_output', '').strip()]
+        candidates = [source for source in sources if source.get('raw_output', '').strip() and source.get('tool') != 'curl']
         # One viewer per tool. Prefer full testssl scanner output, then dedicated probes.
         candidates.sort(key=lambda source: (0 if source.get('tool') == 'testssl' and source.get('role') == 'supplementary scanner output' else 1 if source.get('role') == 'raw scanner output' else 2))
         selected = {}
@@ -570,9 +604,9 @@ def render_sources(sources, compact=False):
                            '><summary>' + tool + ' · Raw evidence</summary><div class="evidence-body">' +
                            '<div class="evidence-toolbar"><span>' + html.escape(str(source.get('status', 'captured'))) +
                            (' · Supplementary scanner output' if source.get('role') == 'supplementary scanner output' else '') +
-                           '</span>' + render_raw_link(source) + '</div><pre class="raw-evidence">' +
+                           '</span>' + render_raw_link(source) + '</div><p class="evidence-method">' + html.escape(str(source.get('method', ''))) + '</p><pre class="raw-evidence">' +
                            html.escape(source['raw_output']) + '</pre></div></details>')
-        supporting = [dict(source, raw_output='') for source in sources if not any(source is chosen for chosen in raw)]
+        supporting = [dict(source, raw_output=source.get('raw_output', '') if source.get('tool') == 'curl' else '', method='HEAD · Redirects followed' if source.get('tool') == 'curl' else source.get('method', '')) for source in sources if not any(source is chosen for chosen in raw)]
         if supporting:
             viewers.append('<details class="evidence-viewer supporting-files"><summary>Supporting files</summary>' +
                            '<div class="evidence-body">' + render_sources(supporting) + '</div></details>')
@@ -589,7 +623,7 @@ def render_report(report):
         rows.append('<details class="finding" data-group="' + esc(f['group']) + '"><summary>' + esc(f['check']) +
             '</summary><div class="finding-content"><div data-field="sources"><h3>Tool / probe evidence</h3>' +
             render_sources(f.get('evidence_sources', []), compact=True) + '</div><div data-field="evidence"><h3>Evidence / limits</h3>' +
-            ('' if any(source.get('raw_output') for source in f.get('evidence_sources', [])) else
+            ('' if any(source.get('raw_output') for source in f.get('evidence_sources', [])) and not any(source.get('tool') == 'WebRaptor HTTP collector (httpx)' for source in f.get('evidence_sources', [])) else
              '<pre>' + esc(json.dumps(f['evidence'], ensure_ascii=False, indent=2)) + '</pre>') + '<p>' + esc(f['note']) +
             '</p><p class="muted">' + esc(f['context']) + '</p></div></div></details>')
     body = '<section class="finding-group scanner-section" id="findings-summary"><div class="findings-header"><h2>Findings Summary <span class="finding-count" aria-label="' + str(len(checks)) + ' findings">' + str(len(checks)) + '</span></h2>'
@@ -654,14 +688,14 @@ def attach_sources(finding, snapshot, folder, modules):
                        status='not applicable' if snapshot.get('tls_not_applicable') else
                        'captured' if snapshot.get('tls_xml_valid') else 'unavailable', role='primary')
         if snapshot.get('tls_xml_valid'):
-            primary['artifact'] = 'verification_tls.xml'
+            primary['artifact'] = snapshot.get('cipher_artifact', 'verification_tls.xml')
             if not snapshot.get('cipher_scan_complete'):
                 primary['status'] = 'partial'
     sources = [primary]
     if name == 'Weak SSL/TLS Ciphers' and snapshot.get('testssl_cipher_valid'):
-        sources.append(dict(tool='testssl', artifact='verification_testssl.json', role='primary',
+        sources.append(dict(tool='testssl', artifact=snapshot.get('testssl_cipher_artifact', 'verification_testssl.json'), role='primary',
                             status='captured' if snapshot.get('testssl_cipher_complete') else 'partial',
-                            method='Fresh endpoint-matched accepted per-suite JSON observations.'))
+                            method='Endpoint-matched accepted per-suite JSON observations.'))
     for module in modules:
         if module.get('module') not in ({'sslscan', 'testssl'} if is_tls else {'curl'}):
             continue
@@ -674,10 +708,10 @@ def attach_sources(finding, snapshot, folder, modules):
                 continue
             sources.append(dict(tool=module['module'], artifact=relative, status=module['status'],
                 role='supplementary scanner output', reused=bool(module.get('reused_from')),
-                method=('HEAD response; may contain redirects. Not independently correlated with this GET check.'
+                method=('HEAD · Redirects followed'
                         if module['module'] == 'curl' else 'Scanner output; not independently correlated with this check.'),
                 sha256=sha256(path.read_bytes()).hexdigest(),
-                raw_output=path.read_text(encoding='utf-8', errors='replace') if is_tls else ''))
+                raw_output=path.read_text(encoding='utf-8', errors='replace') if is_tls or module['module'] == 'curl' else ''))
     # Embed saved, already-redacted scanner output verbatim, never reconstructed rows.
     raw_sources = []
     for tool in (('sslscan', 'testssl') if name == 'Weak SSL/TLS Ciphers' else ('sslscan',)) if is_tls else ():
@@ -702,8 +736,8 @@ def attach_sources(finding, snapshot, folder, modules):
 def assess_target(target, args, folder, stop, run_command, redact, modules=()):
     """Run fresh verification inside a normal target workflow, including resume."""
     snapshot = collect_http(target, args, stop)
-    collect_tls(snapshot, args, folder, stop, run_command, redact)
-    collect_testssl_ciphers(snapshot, args, folder, stop, run_command, redact)
+    collect_tls(snapshot, args, folder, stop, run_command, redact, modules)
+    collect_testssl_ciphers(snapshot, args, folder, stop, run_command, redact, modules)
     for path in list(folder.glob('verification_tls*')) + list(folder.glob('verification_testssl*')):
         if path.is_file():
             path.write_text(redact(path.read_text(encoding='utf-8', errors='replace')), encoding='utf-8')
