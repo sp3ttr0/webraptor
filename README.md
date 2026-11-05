@@ -49,10 +49,4 @@ Single-target resume information is in `data/run.json`. Multi-target sessions al
 
 **Only scan systems you own or have permission to test.** Automated results may be incomplete or inaccurate. Verified means observed, not exploited; missing findings do not prove security. Review evidence and remove sensitive information before sharing reports. Never commit secrets or private scan results.
 
-## Tests
-
-```bash
-.venv/bin/python -m unittest discover -s tests -v
-```
-
 [MIT License](LICENSE).

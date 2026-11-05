@@ -1,23 +1,54 @@
-__pycache__/
+# Environments and managed external tools
 .venv/
+venv/
 .tools/
-results/
 
-# OS/editor files
-.DS_Store
-.pytest_cache/
+# Generated assessment output (including alternate output directory names)
+results/
+output/
+outputs/
+reports/
+logs/
+*.log
+
+# Python, test, build and OS caches
+__pycache__/
 *.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
+.DS_Store
 
 # Local credentials and private scan inputs
 .env
 .env.*
+*.env
 !.env.example
 headers.txt
+auth_headers.txt
 cookies.txt
 targets.txt
+scope.txt
+scope-*.txt
+scope_*.txt
 credentials/
 secrets/
+.aws/
+.ssh/
+id_rsa
+id_ed25519
 *.key
 *.pem
 *.p12
 *.pfx
+*.kdbx
+
+# Runtime-only distribution
+tests/
