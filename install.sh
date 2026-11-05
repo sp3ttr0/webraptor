@@ -68,13 +68,22 @@ install_fixed_testssl() {
     chmod +x "$SCRIPT_DIR/.venv/bin/testssl"
 }
 
-ensure_go() {
-    if command -v go >/dev/null && "$PYTHON" -c '
+go_compatible() {
+    command -v go >/dev/null && "$PYTHON" -c '
 import re,subprocess,sys
 version=subprocess.check_output(["go","env","GOVERSION"],text=True).strip()
 match=re.match(r"go(\d+)\.(\d+)",version)
 sys.exit(0 if match and tuple(map(int,match.groups())) >= (1,21) else 1)
-'; then return; fi
+'
+}
+ensure_go() {
+    if go_compatible; then return; fi
+    if package_available golang-go; then
+        log 'Installing the distro Go toolchain'
+        apt_install golang-go
+        hash -r
+        if go_compatible; then return; fi
+    fi
     log 'Installing the current stable Go toolchain from go.dev (SHA256 verified)'
     # Download metadata and the matching official Linux archive without executing
     # remote shell scripts, and never replace a system Go installation.
