@@ -515,6 +515,20 @@ class LiveOutputTests(unittest.TestCase):
             self.assertEqual(w.Fore.CYAN in text, not no_color)
             self.assertEqual(w.Fore.RED in text, not no_color)
 
+    def test_incomplete_panel_status_is_amber_and_separate_from_failure(self):
+        class Terminal(io.StringIO):
+            def isatty(self): return True
+        stream = Terminal()
+        with contextlib.redirect_stderr(stream), patch.dict(w.os.environ, {'TERM': 'xterm'}, clear=True):
+            progress = w.Progress([('https://localhost', True)], ['nikto'])
+            progress.update('https://localhost', 'nikto', 'incomplete')
+            progress.render()
+        output = stream.getvalue()
+        self.assertIn('Incomplete', output)
+        self.assertIn('Incomplete 1', output)
+        self.assertIn('Failed 0', output)
+        self.assertIn(w.Fore.YELLOW, output)
+
     def test_nonterminal_status_only_and_quiet_mode(self):
         for enabled in (True, False):
             stream = io.StringIO()

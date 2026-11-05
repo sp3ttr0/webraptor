@@ -63,6 +63,29 @@ class UnitTests(unittest.TestCase):
             (folder / 'clean').write_text('Scan completed. 0 matches found.\n')
             self.assertIsNone(w.scanner_failure('nuclei', [folder / 'clean']))
 
+    def test_nikto_termination_preserves_partial_results_for_any_exit_code(self):
+        from scanner_report import collect_scanner_results, render_scanner_results
+        for code in (0, 1):
+            with self.subTest(exit_code=code), tempfile.TemporaryDirectory() as temp:
+                folder = Path(temp)
+                args = w.parse_args(['http://localhost', '--modules', 'nikto'])
+                raw = '+ /: Partial observation\n+ Scan terminated: 13 error(s) and 11 item(s) reported on remote host\n+ End Time: now\n+ 1 host(s) tested\n'
+                def runner(cmd, out, err, *a, **kw):
+                    out.write_text(raw); err.write_text('')
+                    return dict(status='completed' if code == 0 else 'failed', exit_code=code, duration_seconds=1)
+                with patch.object(w, 'run_command', side_effect=runner):
+                    result = w.execute_module('nikto', 'http://localhost', folder, args,
+                                              threading.BoundedSemaphore(1), threading.Event(), w.Redactor())
+                self.assertEqual(result['status'], 'incomplete')
+                self.assertEqual(result['exit_code'], code)
+                self.assertEqual(result['findings_status'], 'partial')
+                self.assertEqual((folder/'nikto_results.txt').read_text(), raw)
+                rendered = render_scanner_results(collect_scanner_results([result], folder))
+                self.assertIn('incomplete', rendered)
+                self.assertIn('Partial observation', rendered)
+                self.assertIn('Scan terminated:', rendered)
+        self.assertIsNone(w.scanner_failure('nikto', []))
+
     def test_original_banner_is_unchanged(self):
         source = (ROOT / 'webraptor.py').read_text()
         node = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == 'print_banner')

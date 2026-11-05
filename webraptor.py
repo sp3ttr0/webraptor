@@ -371,7 +371,7 @@ class Progress:
     LABELS = {'whatweb': 'WhatWeb', 'nikto': 'Nikto', 'dirsearch': 'Dirsearch',
               'nuclei': 'Nuclei', 'waybackurls': 'Waybackurls',
               'verification': 'Finding Verification'}
-    OUTCOMES = {'completed': 'Finished', 'failed': 'Failed', 'timed_out': 'Timed Out',
+    OUTCOMES = {'completed': 'Finished', 'incomplete': 'Incomplete', 'failed': 'Failed', 'timed_out': 'Timed Out',
                 'cancelled': 'Cancelled', 'skipped': 'Skipped', 'reused': 'Reused',
                 'not_applicable': 'Not Applicable', 'queued': 'Queued', 'running': 'Running'}
 
@@ -751,14 +751,14 @@ class Progress:
                 return left + ('─ ' + title + ' ').ljust(width - 2, '─')[:width - 2] + right
             visible = [(edge('WEBRAPTOR · SCANNER PROGRESS', '┌', '┐'), Fore.CYAN)]
             colors = {'running': Fore.CYAN, 'completed': Fore.GREEN, 'reused': Fore.GREEN,
-                      'failed': Fore.RED, 'timed_out': Fore.RED, 'cancelled': Fore.YELLOW,
+                      'incomplete': Fore.YELLOW, 'failed': Fore.RED, 'timed_out': Fore.RED, 'cancelled': Fore.YELLOW,
                       'skipped': Fore.YELLOW, 'not_applicable': Fore.YELLOW, 'stale': Fore.YELLOW}
             visible += [(framed(text), colors.get(status, Style.DIM)) for status, text in rows[:capacity]]
             if len(rows) > capacity:
                 visible.append((framed(f'... {len(rows) - capacity} more tasks'), Style.DIM))
             done = counts.get('completed', 0) + counts.get('reused', 0)
             failed = counts.get('failed', 0) + counts.get('timed_out', 0)
-            visible.append((framed(f'Finished {done}/{len(self.states)} | Running {counts.get("running", 0)} | Failed {failed} | Queued {counts.get("queued", 0)}'), Fore.CYAN))
+            visible.append((framed(f'Finished {done}/{len(self.states)} | Running {counts.get("running", 0)} | Failed {failed} | Incomplete {counts.get("incomplete", 0)} | Queued {counts.get("queued", 0)}'), Fore.CYAN))
             visible.append((edge('Hunt Smarter, Not Harder', '└', '┘'), Fore.CYAN))
             if self.lines:
                 sys.stderr.write(f'\x1b[{self.lines}A')
@@ -1101,6 +1101,8 @@ def scanner_failure(module, paths):
             continue
         with path.open(encoding='utf-8', errors='replace') as source:
             for line in source:
+                if module == 'nikto' and re.search(r'^\s*\+?\s*Scan terminated:', line, re.I):
+                    return 'Nikto scan terminated; partial results retained. ' + line.strip().lstrip('+').strip()
                 if module == 'whatweb' and re.search(r'^\s*ERROR Opening:', line):
                     return 'WhatWeb could not open the target; see scanner evidence for the connection error'
                 if module == 'nuclei' and re.search(r'Skipped .+ from target list as found unresponsive permanently', line, re.I):
@@ -1217,8 +1219,8 @@ def execute_module(module, target, folder, args, slots, stop, redact, progress_t
         result.update(run_command(cmd, stdout, stderr, args.tool_timeout, stop, redact, on_output=callback, tty_stdout=(module in ('sslscan', 'whatweb', 'curl'))))
         redact_artifact(artifact, redact)
         failure = scanner_failure(module, (stdout, stderr))
-        if failure and result['status'] == 'completed':
-            result.update(status='failed', error=failure, findings_status='partial')
+        if failure and (result['status'] == 'completed' or module == 'nikto' and result['status'] == 'failed'):
+            result.update(status='incomplete' if module == 'nikto' else 'failed', error=failure, findings_status='partial')
         if module == 'nuclei':
             result['findings'], result['findings_status'] = nuclei_findings(artifact, result['status'], redact)
             if result['status'] == 'completed' and result['findings_status'] != 'complete':
