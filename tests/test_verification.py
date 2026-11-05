@@ -106,6 +106,55 @@ class FindingChecks(unittest.TestCase):
         self.assertFalse(r['verified'])
         self.assertEqual(v.check_breach(snapshot([('content-encoding', 'identity')]))['status'], 'not_found')
 
+    def test_all_tls_checks_prefer_full_testssl_and_support_sslscan_fallback(self):
+        names = ('Weak SSL/TLS Ciphers', 'TLSv1.3 Disabled', 'Wildcard SSL Certificates in Use',
+                 'SSLv2 Enabled', 'SSLv3 Enabled', 'TLSv1.0 Enabled', 'TLSv1.1 Enabled',
+                 'SSL Certificate Using Weak Hashing Algorithm', 'Expired SSL Certificate')
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            (folder/'testssl_results.txt').write_text('Full native testssl output <escaped>')
+            (folder/'verification_tls_stdout.log').write_text('Native sslscan output')
+            modules = [dict(module='testssl', status='completed', artifacts=['testssl_results.txt'])]
+            for name in names:
+                with self.subTest(check=name):
+                    finding = v.attach_sources(v.result(name, 'found', verified=True), snapshot(), folder, modules)
+                    sources = finding['evidence_sources']
+                    rendered = v.render_sources(sources, compact=True)
+                    self.assertIn('open><summary>testssl · Raw evidence', rendered)
+                    self.assertIn('&lt;escaped&gt;', rendered)
+                    fallback = v.render_sources([s for s in sources if s.get('tool') != 'testssl'], compact=True)
+                    self.assertIn('open><summary>sslscan · Raw evidence', fallback)
+
+    def test_tls_evidence_fallback_and_duplicate_tool_outputs(self):
+        fallback = v.render_sources([dict(tool='sslscan', raw_output='accepted TLS')], compact=True)
+        self.assertIn('open><summary>sslscan · Raw evidence', fallback)
+        self.assertNotIn('testssl · Raw evidence', fallback)
+        rendered = v.render_sources([dict(tool='testssl', raw_output='full scan', role='supplementary scanner output'),
+                                    dict(tool='testssl', raw_output='dedicated scan', role='raw scanner output'),
+                                    dict(tool='sslscan', raw_output='SSL scan')], compact=True)
+        self.assertEqual(rendered.count('testssl · Raw evidence'), 1)
+        self.assertIn('<pre class="raw-evidence">full scan', rendered)
+        self.assertNotIn('<pre class="raw-evidence">dedicated scan', rendered)
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            (folder/'verification_testssl_stdout.log').write_text('cipher-only probe')
+            (folder/'verification_tls_stdout.log').write_text('protocols and certificates')
+            for check in ('TLSv1.3 Disabled', 'Expired SSL Certificate', 'TLSv1.0 Enabled'):
+                finding = v.attach_sources(v.result(check, 'found', verified=True), snapshot(), folder, [])
+                output = v.render_sources(finding['evidence_sources'], compact=True)
+                self.assertIn('open><summary>sslscan · Raw evidence', output)
+                self.assertNotIn('cipher-only probe', output)
+
+    def test_testssl_raw_evidence_is_default_and_other_sources_are_collapsed(self):
+        sources = [dict(tool='sslscan', raw_output='sslscan raw', artifact='ssl.log'),
+                   dict(tool='testssl', raw_output='testssl raw', artifact='test.log'),
+                   dict(tool='sslscan', artifact='probe.xml')]
+        rendered = v.render_sources(sources, compact=True)
+        self.assertIn('class="evidence-viewer" open><summary>testssl · Raw evidence', rendered)
+        self.assertIn('class="evidence-viewer"><summary>sslscan · Raw evidence', rendered)
+        self.assertLess(rendered.index('testssl raw'), rendered.index('sslscan raw'))
+        self.assertIn('Supporting files', rendered)
+
     def test_raw_tls_evidence_is_verbatim_escaped_and_linked(self):
         with tempfile.TemporaryDirectory() as temp:
             folder = Path(temp)

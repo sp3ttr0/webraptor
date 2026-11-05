@@ -533,7 +533,14 @@ def enrich_finding(finding):
     return finding
 
 
-def render_sources(sources):
+def render_raw_link(source):
+    artifact = source.get('artifact')
+    if isinstance(artifact, str) and not Path(artifact).is_absolute() and '..' not in Path(artifact).parts:
+        return '<a href="' + html.escape(quote(artifact, safe='/'), quote=True) + '">Open raw file</a>'
+    return ''
+
+
+def render_sources(sources, compact=False):
     blocks = []
     for source in sources:
         tool = html.escape(str(source.get('tool', 'Unrecorded source')))
@@ -548,6 +555,28 @@ def render_sources(sources):
                       ('<small>Reused scanner artifact from a previous run.</small>' if source.get('reused') else '') +
                       ('<pre class="raw-evidence">' + html.escape(source['raw_output']) + '</pre>'
                        if source.get('raw_output') else '') + '</div>')
+    if compact:
+        candidates = [source for source in sources if source.get('raw_output', '').strip()]
+        # One viewer per tool. Prefer full testssl scanner output, then dedicated probes.
+        candidates.sort(key=lambda source: (0 if source.get('tool') == 'testssl' and source.get('role') == 'supplementary scanner output' else 1 if source.get('role') == 'raw scanner output' else 2))
+        selected = {}
+        for source in candidates:
+            selected.setdefault(source.get('tool'), source)
+        raw = sorted(selected.values(), key=lambda source: (source.get('tool') != 'testssl', source.get('tool') != 'sslscan'))
+        viewers = []
+        for index, source in enumerate(raw):
+            tool = html.escape(str(source.get('tool', 'Scanner')))
+            viewers.append('<details class="evidence-viewer"' + (' open' if index == 0 else '') +
+                           '><summary>' + tool + ' · Raw evidence</summary><div class="evidence-body">' +
+                           '<div class="evidence-toolbar"><span>' + html.escape(str(source.get('status', 'captured'))) +
+                           (' · Supplementary scanner output' if source.get('role') == 'supplementary scanner output' else '') +
+                           '</span>' + render_raw_link(source) + '</div><pre class="raw-evidence">' +
+                           html.escape(source['raw_output']) + '</pre></div></details>')
+        supporting = [dict(source, raw_output='') for source in sources if not any(source is chosen for chosen in raw)]
+        if supporting:
+            viewers.append('<details class="evidence-viewer supporting-files"><summary>Supporting files</summary>' +
+                           '<div class="evidence-body">' + render_sources(supporting) + '</div></details>')
+        return ''.join(viewers)
     return ''.join(blocks) or '<span class="muted">No source recorded; evidence provenance is unavailable.</span>'
 
 
@@ -559,7 +588,7 @@ def render_report(report):
     for f in sorted(checks, key=lambda finding: finding['check']):
         rows.append('<details class="finding" data-group="' + esc(f['group']) + '"><summary>' + esc(f['check']) +
             '</summary><div class="finding-content"><div data-field="sources"><h3>Tool / probe evidence</h3>' +
-            render_sources(f.get('evidence_sources', [])) + '</div><div data-field="evidence"><h3>Evidence / limits</h3>' +
+            render_sources(f.get('evidence_sources', []), compact=True) + '</div><div data-field="evidence"><h3>Evidence / limits</h3>' +
             ('' if any(source.get('raw_output') for source in f.get('evidence_sources', [])) else
              '<pre>' + esc(json.dumps(f['evidence'], ensure_ascii=False, indent=2)) + '</pre>') + '<p>' + esc(f['note']) +
             '</p><p class="muted">' + esc(f['context']) + '</p></div></div></details>')
@@ -647,10 +676,11 @@ def attach_sources(finding, snapshot, folder, modules):
                 role='supplementary scanner output', reused=bool(module.get('reused_from')),
                 method=('HEAD response; may contain redirects. Not independently correlated with this GET check.'
                         if module['module'] == 'curl' else 'Scanner output; not independently correlated with this check.'),
-                sha256=sha256(path.read_bytes()).hexdigest()))
+                sha256=sha256(path.read_bytes()).hexdigest(),
+                raw_output=path.read_text(encoding='utf-8', errors='replace') if is_tls else ''))
     # Embed saved, already-redacted scanner output verbatim, never reconstructed rows.
     raw_sources = []
-    for tool in ('sslscan', 'testssl') if is_tls else ():
+    for tool in (('sslscan', 'testssl') if name == 'Weak SSL/TLS Ciphers' else ('sslscan',)) if is_tls else ():
         filename = 'verification_tls_stdout.log' if tool == 'sslscan' else 'verification_testssl_stdout.log'
         path = folder / filename
         if path.is_file() and path.resolve().is_relative_to(folder.resolve()):
