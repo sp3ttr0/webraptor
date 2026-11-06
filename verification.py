@@ -35,9 +35,20 @@ def result(name, state, evidence=(), note='', verified=False):
                 evidence=list(evidence), note=note)
 
 
-def header_check(snapshot, header, name):
+def http_response_issue(snapshot, name):
     if snapshot.get('error'):
         return result(name, 'unknown', note=snapshot['error'])
+    status = snapshot.get('http_status')
+    if status != 200:
+        return result(name, 'unknown', [dict(http_status=status)],
+                      'HTTP 200 is required for HTTP header/content verification; this response is inconclusive.', False)
+    return None
+
+
+def header_check(snapshot, header, name):
+    issue = http_response_issue(snapshot, name)
+    if issue is not None:
+        return issue
     values = [v for k, v in snapshot['headers'] if k.lower() == header]
     present = any(v.strip() for v in values)
     return result(name, 'not_found' if present else 'found',
@@ -118,8 +129,9 @@ def token_header_check(s, header, name, allowed, fallback=False):
 
 def check_insecure_csp(s):
     name = 'Insecure Content Security Policy (CSP)'
-    if s.get('error'):
-        return result(name, 'unknown', note=s['error'])
+    issue = http_response_issue(s, name)
+    if issue is not None:
+        return issue
     policies = [v for k, v in s['headers'] if k.lower() == 'content-security-policy'] + s.get('meta_csp', [])
     if not policies:
         return result(name, 'not_applicable', note='No enforcing policy captured; see the missing-CSP check.')
@@ -324,8 +336,9 @@ def check_expired_certificate(s):
 
 def check_breach(s):
     name = 'HTTP Compression Enabled (BREACH Vulnerability)'
-    if s.get('error'):
-        return result(name, 'unknown', note=s['error'])
+    issue = http_response_issue(s, name)
+    if issue is not None:
+        return issue
     encodings = [v for k, v in s['headers'] if k.lower() == 'content-encoding']
     compressed = any(t.strip().lower() not in ('', 'identity') for v in encodings for t in v.split(','))
     return result(name, 'potential' if compressed else 'not_found', [dict(content_encoding=encodings)],
@@ -345,6 +358,8 @@ def check_wildcard_certificate(s):
 
 def deprecated_header(s, header, name):
     r = header_check(s, header, name)
+    if r['status'] == 'unknown':
+        return r
     if r['status'] in ('found', 'not_found'):
         r['status'] = 'not_found' if r['status'] == 'found' else 'found'
     r['note'] = ('Header presence observed. X-Frame-Options remains useful for legacy clients; prefer CSP frame-ancestors.'
@@ -362,8 +377,9 @@ def check_x_xss_protection(s):
 
 def check_duplicate_security_headers(s):
     name = 'Duplicate HTTP Security Headers Found'
-    if s.get('error'):
-        return result(name, 'unknown', note=s['error'])
+    issue = http_response_issue(s, name)
+    if issue is not None:
+        return issue
     counts = Counter(k.lower() for k, _ in s['headers'] if k.lower() in SECURITY_HEADERS)
     duplicates = [dict(header=k, count=n, values=[v for h, v in s['headers'] if h.lower() == k])
                   for k, n in counts.items() if n > 1]

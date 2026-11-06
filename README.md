@@ -41,7 +41,7 @@ Tools run concurrently with a compact progress panel. TLS verification reuses sc
 
 ## Reports
 
-Open the target's **`report.html`** under `results/`. Keep its `data/`, `evidence/`, and `logs/` folders together so evidence links work. `data/verification.json` includes all check results; the HTML Findings Summary lists only found and verified findings.
+Open the target's **`report.html`** under `results/`. Keep its `data/`, `evidence/`, and `logs/` folders together so evidence links work. `data/verification.json` includes all check results; the HTML Findings Summary lists only found and verified findings. HTTP header/content checks require a GET response of 200; other statuses remain inconclusive. TLS checks use protocol and certificate evidence.
 
 Single-target resume information is in `data/run.json`. Multi-target sessions also use `results/_runs/`.
 
