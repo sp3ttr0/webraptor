@@ -838,19 +838,19 @@ def print_completion(results, batch_folder, elapsed, cancelled=False, manifest_p
     minutes, seconds = divmod(remainder, 60)
     duration = (f'{hours}h ' if hours else '') + (f'{minutes}m ' if minutes or hours else '') + f'{seconds}s'
     emit('')
-    emit('─' * width, Fore.CYAN)
+    emit('─' * width, Fore.LIGHTBLUE_EX)
     emit('  WEBRAPTOR · ' + title.split(' · ')[0], tone)
     emit(f'  Completed targets  {complete}/{len(results)}    Elapsed  {duration}')
     if complete != len(results) or cancelled:
         emit('  Partial results saved. Review scanner evidence and logs.', Fore.YELLOW)
-    emit('─' * width, Fore.CYAN)
+    emit('─' * width, Fore.LIGHTBLUE_EX)
     manifest = Path(manifest_path) if manifest_path is not None else Path(batch_folder)/'run.json'
     for index, result in enumerate(results, 1):
         folder = Path(result['run_directory'])
         emit('')
-        emit('  Output folder' + (f' · Target {index}' if len(results) > 1 else ''), Fore.CYAN)
+        emit('  Output folder' + (f' · Target {index}' if len(results) > 1 else ''), Fore.LIGHTBLUE_EX)
         emit('  ' + str(folder))
-        emit('    ├─ Report     report.html', Fore.CYAN)
+        emit('    ├─ Report     report.html', Fore.LIGHTBLUE_EX)
         emit('    ├─ Evidence   evidence/')
         emit('    ├─ Logs       logs/')
         if manifest.is_relative_to(folder):
@@ -859,16 +859,16 @@ def print_completion(results, batch_folder, elapsed, cancelled=False, manifest_p
             emit('    └─ Data       data/')
     if len(results) > 1:
         emit('')
-        emit('  Session folder', Fore.CYAN)
+        emit('  Session folder', Fore.LIGHTBLUE_EX)
         emit('  ' + str(batch_folder))
         emit('    ├─ Report     report.html')
         emit('    └─ Resume     ' + (str(manifest.relative_to(batch_folder)) if manifest.is_relative_to(batch_folder) else str(manifest)))
     elif not manifest.is_relative_to(Path(results[0]['run_directory'])):
         emit('')
-        emit('  Resume manifest', Fore.CYAN)
+        emit('  Resume manifest', Fore.LIGHTBLUE_EX)
         emit('  ' + str(manifest))
     emit('')
-    emit('  Hunt Smarter, Not Harder.', Fore.CYAN)
+    emit('  Hunt Smarter, Not Harder.', Fore.LIGHTBLUE_EX)
     emit('  WebRaptor is exiting.', tone)
     emit('')
 
