@@ -169,34 +169,58 @@ def read_headers(args):
 
 
 def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description='WebRaptor — web application scanning workflow', allow_abbrev=False)
-    parser.add_argument('target', nargs='?', help='Domain or HTTP(S) URL')
-    parser.add_argument('-l', '--targets-file', help='One target per line; # comments allowed')
-    parser.add_argument('--check-tools', action='store_true', help='Check versions and required CLI flags without scanning')
+    parser = argparse.ArgumentParser(
+        description='WebRaptor — scan web applications and generate evidence-based HTML/JSON reports.',
+        allow_abbrev=False, add_help=False,
+        formatter_class=lambda prog: argparse.RawDescriptionHelpFormatter(prog, width=96, max_help_position=30),
+        epilog="""Examples:
+  python webraptor.py https://example.com
+  python webraptor.py -l targets.txt --threads 4
+  python webraptor.py https://example.com --modules curl,whatweb,nikto
+  python webraptor.py https://example.com --exclude nuclei,dirsearch
+  python webraptor.py https://example.com --headers-file headers.txt
+  python webraptor.py --resume results/<target>/<run-id>/data/run.json
+  python webraptor.py --check-tools
+
+Reports: open report.html inside the target's run folder under results/.
+HTTP/WhatWeb results require a final HTTP 200; redirects are followed up to 10 hops.
+TLS verification reuses scanner evidence; excluded tools can leave checks inconclusive.
+Raw scanner output stays in evidence/log files, separate from the progress panel.
+Only scan systems you own or have permission to test.""")
+    parser.add_argument('-h', '--help', action='help', help='Show this guide and exit without scanning.')
+    targets = parser.add_argument_group('Targets and saved scans')
+    targets.add_argument('target', nargs='?', metavar='TARGET', help='One domain or HTTP(S) URL, such as example.com or https://example.com/app. Use this OR --targets-file. Bare domains try HTTPS first, then HTTP.')
+    targets.add_argument('-l', '--targets-file', metavar='FILE', help='Read domains/URLs from a text file, one per line. Blank lines and lines starting with # are ignored.')
+    targets.add_argument('--resume', metavar='PATH', help='Resume from a previous run folder, its data/ folder, or run.json. Creates a new run and reuses eligible outputs. Supply authentication again; do not combine with a new target.')
+    scanners = parser.add_argument_group('Scanner selection and tool checks')
+    scanners.add_argument('--check-tools', action='store_true', help='Check installed scanner versions and required options, then exit without scanning. Takes no target; respects --modules and --exclude.')
+    scanners.add_argument('--modules', metavar='NAMES', default=','.join(MODULES), help='Run only these comma-separated scanners. Choices: curl, whatweb, nikto, waybackurls, dirsearch, nuclei, testssl, sslscan. Default: all eight.')
+    scanners.add_argument('--exclude', metavar='NAMES', action='append', default=[], help='Skip comma-separated scanners from the selected modules. May be repeated. Example: --exclude nuclei,dirsearch.')
+    scanners.add_argument('--nuclei-template', metavar='PATH', help='Use a Nuclei template file or directory. Default: Nuclei chooses from its installed templates.')
+    scanners.add_argument('--wordlist', metavar='FILE', help='Use this list of paths for Dirsearch. Default: Dirsearch uses its installed wordlist.')
+    pace = parser.add_argument_group('Concurrency, request rates, and time limits')
+    pace.add_argument('--threads', metavar='COUNT', type=positive_int, default=6, help='Maximum scanner processes running at once across all targets. This is separate from Dirsearch request threads. Default: 6.')
+    pace.add_argument('--target-concurrency', metavar='COUNT', type=positive_int, default=1, help='Number of targets scanned at the same time. They share the --threads limit. Default: 1.')
+    pace.add_argument('--tool-timeout', metavar='SECONDS', type=positive_float, default=1800, help='Stop an individual scanner after this many seconds and keep its partial output. Default: 1800 (30 minutes).')
+    pace.add_argument('--probe-timeout', metavar='SECONDS', type=positive_float, default=8, help='Timeout for HTTP reachability, redirect/verification requests, and direct TLS probes. Default: 8.')
+    pace.add_argument('--nuclei-rate', metavar='REQUESTS', type=positive_int, default=20, help='Maximum Nuclei requests per second per scanner process. Default: 20.')
+    pace.add_argument('--dirsearch-rate', metavar='REQUESTS', type=positive_int, default=10, help='Maximum Dirsearch requests per second per scanner process. Default: 10.')
+    pace.add_argument('--dirsearch-threads', metavar='COUNT', type=positive_int, default=10, help='Concurrent request workers inside each Dirsearch process. Requests also obey --dirsearch-rate. Default: 10.')
+    pace.add_argument('--whatweb-wait', metavar='SECONDS', type=positive_int, default=1, help='Whole seconds WhatWeb waits between connections. Default: 1.')
+    pace.add_argument('--nikto-pause', metavar='SECONDS', type=positive_float, default=1, help='Seconds Nikto waits between requests; decimals are allowed, such as 0.5. Default: 1.')
+    connection = parser.add_argument_group('HTTP and HTTPS connections')
+    connection.add_argument('--allow-scheme-fallback', action='store_true', help='If an explicitly supplied HTTP(S) URL cannot be reached, also try the other scheme. Bare domains already allow this by default.')
+    connection.add_argument('--insecure', action='store_true', help='Skip HTTPS certificate validation in HTTP probes/verification and curl, for example for a self-signed test target. Certificate trust checks remain separate.')
+    authentication = parser.add_argument_group('Authentication and custom headers')
+    authentication.add_argument('-H', '--header', metavar='HEADER', action='append', default=[], help='Add a quoted HTTP header; may be repeated. Example: -H "Authorization: Bearer TOKEN". Not sent to Waybackurls or sslscan.')
+    authentication.add_argument('--headers-file', metavar='FILE', help='Read HTTP headers from a file, one Name: value per line. Useful for keeping credentials out of your command history.')
+    cookie = authentication.add_mutually_exclusive_group()
+    cookie.add_argument('--cookie', metavar='VALUE', help='Send this quoted Cookie header value, such as "session=VALUE". Cannot be combined with --cookie-file.')
+    cookie.add_argument('--cookie-file', metavar='FILE', help='Read the Cookie header value from a file. Store only its value, such as session=VALUE; not browser cookie-jar format.')
+    output = parser.add_argument_group('Reports and terminal output')
+    output.add_argument('--output-dir', metavar='DIR', default='results', help='Save reports, evidence, logs, and resume metadata under this directory. Default: results. Each scan gets a separate run folder.')
+    output.add_argument('--no-progress', action='store_true', help='Hide the scanner progress panel and status updates. Reports and raw evidence/log files are still saved.')
     parser.add_argument('--verify-findings', action='store_true', help=argparse.SUPPRESS)  # Legacy no-op; verification is automatic.
-    parser.add_argument('--resume', help='Previous target run/data directory or session run.json; writes a new run')
-    parser.add_argument('--no-progress', action='store_true', help='Disable live scanner output and progress on stderr')
-    parser.add_argument('--output-dir', default='results')
-    parser.add_argument('--modules', default=','.join(MODULES), help='Comma-separated module names')
-    parser.add_argument('--exclude', action='append', default=[], help='Comma-separated modules to omit; repeatable, applied after --modules')
-    parser.add_argument('--threads', type=positive_int, default=6, help='Global maximum active scanner processes (default: 6)')
-    parser.add_argument('--target-concurrency', type=positive_int, default=1, help='Concurrent target workflows (default: 1)')
-    parser.add_argument('--tool-timeout', type=positive_float, default=1800, help='Wall-clock seconds per module (default: 1800)')
-    parser.add_argument('--probe-timeout', type=positive_float, default=8, help='HTTP probe timeout in seconds (default: 8)')
-    parser.add_argument('--allow-scheme-fallback', action='store_true', help='Allow explicit URLs to try the other scheme')
-    parser.add_argument('--insecure', action='store_true', help='Disable certificate verification for the reachability probe and curl')
-    parser.add_argument('--nuclei-template')
-    parser.add_argument('--wordlist')
-    parser.add_argument('--nuclei-rate', type=positive_int, default=20, help='Nuclei requests/sec per process (default: 20)')
-    parser.add_argument('--dirsearch-rate', type=positive_int, default=10, help='Dirsearch requests/sec per process (default: 10)')
-    parser.add_argument('--dirsearch-threads', type=positive_int, default=10)
-    parser.add_argument('--whatweb-wait', type=positive_int, default=1, help='Seconds between WhatWeb connections (default: 1)')
-    parser.add_argument('--nikto-pause', type=positive_float, default=1, help='Seconds between Nikto requests (default: 1)')
-    parser.add_argument('-H', '--header', action='append', default=[], help='HTTP header; repeatable')
-    parser.add_argument('--headers-file', help='File of HTTP headers, one Name: value per line')
-    cookie = parser.add_mutually_exclusive_group()
-    cookie.add_argument('--cookie', help='Cookie header value')
-    cookie.add_argument('--cookie-file', help='File containing a Cookie header value')
     tokens = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(tokens)
     if args.verify_findings and (args.resume or args.check_tools):
