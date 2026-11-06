@@ -749,8 +749,8 @@ class Progress:
                 if width < 8:
                     return title[:width]
                 return left + ('─ ' + title + ' ').ljust(width - 2, '─')[:width - 2] + right
-            visible = [(edge('WEBRAPTOR · SCANNER PROGRESS', '┌', '┐'), Fore.CYAN)]
-            colors = {'running': Fore.CYAN, 'completed': Fore.GREEN, 'reused': Fore.GREEN,
+            visible = [(edge('WEBRAPTOR · SCANNER PROGRESS', '┌', '┐'), Fore.LIGHTBLUE_EX)]
+            colors = {'running': Fore.LIGHTBLUE_EX, 'completed': Fore.GREEN, 'reused': Fore.GREEN,
                       'incomplete': Fore.YELLOW, 'failed': Fore.RED, 'timed_out': Fore.RED, 'cancelled': Fore.YELLOW,
                       'skipped': Fore.YELLOW, 'not_applicable': Fore.YELLOW, 'stale': Fore.YELLOW}
             visible += [(framed(text), colors.get(status, Style.DIM)) for status, text in rows[:capacity]]
@@ -758,8 +758,8 @@ class Progress:
                 visible.append((framed(f'... {len(rows) - capacity} more tasks'), Style.DIM))
             done = counts.get('completed', 0) + counts.get('reused', 0)
             failed = counts.get('failed', 0) + counts.get('timed_out', 0)
-            visible.append((framed(f'Finished {done}/{len(self.states)} | Running {counts.get("running", 0)} | Failed {failed} | Incomplete {counts.get("incomplete", 0)} | Queued {counts.get("queued", 0)}'), Fore.CYAN))
-            visible.append((edge('Hunt Smarter, Not Harder', '└', '┘'), Fore.CYAN))
+            visible.append((framed(f'Finished {done}/{len(self.states)} | Running {counts.get("running", 0)} | Failed {failed} | Incomplete {counts.get("incomplete", 0)} | Queued {counts.get("queued", 0)}'), Fore.LIGHTBLUE_EX))
+            visible.append((edge('Hunt Smarter, Not Harder', '└', '┘'), Fore.LIGHTBLUE_EX))
             if self.lines:
                 sys.stderr.write(f'\x1b[{self.lines}A')
             for i in range(max(self.lines, len(visible))):
