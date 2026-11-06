@@ -1228,24 +1228,46 @@ def execute_module(module, target, folder, args, slots, stop, redact, progress_t
         if progress:
             progress.update(progress_target or target, module, 'running')
             announced = True
-        cmd, artifact = build_command(module, target, folder, args)
+        command_target, command_args = target, args
+        if module == 'whatweb':
+            from verification import collect_http
+            resolved = collect_http(target, args, stop)
+            redirect_path = folder/'whatweb_redirects.json'
+            write_json(redirect_path, json.loads(redact(json.dumps(resolved))))
+            if resolved.get('error'):
+                result.update(status='incomplete', findings_status='partial',
+                              error='WhatWeb redirect resolution failed; HTTP 200 was not established.',
+                              artifacts=[redirect_path.name], artifact_hashes={redirect_path.name:file_digest(redirect_path)})
+                return result
+            command_target = resolved.get('http_url', target)
+            result['assessed_url'] = redact(command_target)
+            result['redirect_chain'] = json.loads(redact(json.dumps(resolved.get('redirect_chain', []))))
+            if resolved.get('cross_origin_redirect'):
+                command_args = copy.copy(args)
+                command_args.headers = []
+        cmd, artifact = build_command(module, command_target, folder, command_args)
         stdout = artifact if module in ('curl', 'whatweb', 'nikto', 'waybackurls', 'testssl', 'sslscan') else folder / (module + '_stdout.log')
         stderr = folder / (module + '_stderr.log')
         result['started_at'] = timestamp()
-        result['authentication'] = 'not_applicable' if module in ('waybackurls', 'sslscan') else ('headers_supplied' if args.headers else 'none')
+        result['authentication'] = 'not_applicable' if module in ('waybackurls', 'sslscan') else ('headers_supplied' if command_args.headers else 'none')
         callback = (lambda text: progress.output(progress_target or target, module, text)) if progress and progress.enabled else None
         result.update(run_command(cmd, stdout, stderr, args.tool_timeout, stop, redact, on_output=callback, tty_stdout=(module in ('sslscan', 'whatweb', 'curl'))))
         redact_artifact(artifact, redact)
         failure = scanner_failure(module, (stdout, stderr))
         if failure and (result['status'] == 'completed' or module == 'nikto' and result['status'] == 'failed'):
             result.update(status='incomplete' if module == 'nikto' else 'failed', error=failure, findings_status='partial')
+        if module == 'whatweb' and result['status'] == 'completed':
+            from scanner_report import whatweb_http_200
+            if not stdout.is_file() or not whatweb_http_200(stdout.read_text(encoding='utf-8', errors='replace')):
+                result.update(status='incomplete', findings_status='partial',
+                              error='WhatWeb requires HTTP 200; technology observations are inconclusive. Raw evidence retained.')
         if module == 'nuclei':
             result['findings'], result['findings_status'] = nuclei_findings(artifact, result['status'], redact)
             if result['status'] == 'completed' and result['findings_status'] != 'complete':
                 result.update(status='failed', error='Nuclei output missing or invalid; findings may be incomplete')
         elif module == 'dirsearch' and result['status'] == 'completed' and not artifact.exists():
             result.update(status='failed', error='Expected scanner output is missing')
-        sidecars = [folder/'sslscan_results.xml'] if module == 'sslscan' else [folder/'testssl_results.json'] if module == 'testssl' else []
+        sidecars = [folder/'sslscan_results.xml'] if module == 'sslscan' else [folder/'testssl_results.json'] if module == 'testssl' else [folder/'whatweb_redirects.json'] if module == 'whatweb' else []
         for sidecar in sidecars:
             if sidecar.is_file():
                 redact_artifact(sidecar, redact)

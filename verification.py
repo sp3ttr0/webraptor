@@ -13,7 +13,7 @@ import shutil
 import socket
 import ssl
 import time
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlsplit, urljoin, urldefrag
 
 from report_ui import page
 import xml.etree.ElementTree as ET
@@ -52,12 +52,12 @@ def header_check(snapshot, header, name):
     values = [v for k, v in snapshot['headers'] if k.lower() == header]
     present = any(v.strip() for v in values)
     return result(name, 'not_found' if present else 'found',
-                  [dict(header=header, values=values, http_status=snapshot['http_status'])],
+                  [dict(header=header, values=values, http_status=snapshot['http_status'], url=snapshot.get('http_url', snapshot['target']))],
                   'Presence check for this response only; policy correctness is separate.', True)
 
 
 def check_hsts(s):
-    if urlsplit(s['target']).scheme != 'https':
+    if urlsplit(s.get('http_url', s['target'])).scheme != 'https':
         return result('Strict Transport Security Not Implemented', 'not_applicable',
                       note='HSTS is only accepted over HTTPS; no HTTPS endpoint was inferred.')
     r = header_check(s, 'strict-transport-security', 'Strict Transport Security Not Implemented')
@@ -414,9 +414,9 @@ class Page(HTMLParser):
             self.in_head = False
 
 
-def fetch(client, url, stop, timeout):
+def fetch(client, url, stop, timeout, headers=None):
     deadline = time.monotonic() + timeout
-    with client.stream('GET', url) as response:
+    with client.stream('GET', url, headers=headers) as response:
         body = bytearray()
         truncated = False
         for chunk in response.iter_bytes():
@@ -435,10 +435,34 @@ def collect_http(target, args, stop):
         s['error'] = 'Cancelled'
         return s
     try:
-        with httpx.Client(headers=dict(args.headers), timeout=args.probe_timeout,
+        with httpx.Client(timeout=args.probe_timeout,
                           verify=not args.insecure, follow_redirects=False,
                           trust_env=False) as client:
-            response, body, truncated = fetch(client, target, stop, args.probe_timeout)
+            current, seen, chain = target, set(), []
+            request_headers = dict(args.headers)
+            s['redirect_chain'] = chain
+            for hop in range(11):
+                current = urldefrag(current)[0]
+                if current in seen:
+                    raise ValueError('Redirect loop')
+                seen.add(current)
+                response, body, truncated = fetch(client, current, stop, args.probe_timeout, request_headers)
+                s['http_url'] = str(response.url)
+                if response.status_code not in (301, 302, 303, 307, 308) or not response.headers.get('location'):
+                    break
+                if hop == 10:
+                    raise ValueError('Too many redirects')
+                following = urljoin(str(response.url), response.headers['location'])
+                parsed = urlsplit(following)
+                if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password:
+                    raise ValueError('Unsupported redirect destination')
+                chain.append(dict(url=str(response.url), http_status=response.status_code, location=following))
+                old = urlsplit(current)
+                if (parsed.scheme, parsed.hostname, parsed.port or (443 if parsed.scheme == 'https' else 80)) != (old.scheme, old.hostname, old.port or (443 if old.scheme == 'https' else 80)):
+                    request_headers = {}
+                    client.cookies.clear()
+                    s['cross_origin_redirect'] = True
+                current = following
             s.update(headers=list(response.headers.multi_items()), http_status=response.status_code,
                      truncated=truncated, certificate_validation=not args.insecure,
                      server=response.headers.get('server') or 'Not disclosed')
@@ -652,6 +676,7 @@ def render_report(report):
     body = render_scanner_results(report.get('scanner_results', [])) + body
     return page('WebRaptor Web Application Security Assessment Report', body, report['target'],
                 {'Server': report.get('server', 'Not recorded'), 'HTTP response': report.get('http_status'),
+                 'HTTP URL': report.get('http_url') if report.get('http_url') != report['target'] else None,
                  'Checked': report.get('checked_at', 'not recorded'), 'Scope': report.get('scope')})
 
 
@@ -669,7 +694,8 @@ def redact_tree(value, redact):
 def capture_sources(snapshot, folder, redact):
     """Persist the actual collector/probe evidence, excluding unrelated headers."""
     selected = set(SECURITY_HEADERS) | {'content-type', 'content-encoding', 'server'}
-    http = dict(target=snapshot['target'], method='GET', redirects_followed=False,
+    http = dict(target=snapshot['target'], url=snapshot.get('http_url', snapshot['target']), method='GET',
+                redirects_followed=bool(snapshot.get('redirect_chain')), redirect_chain=snapshot.get('redirect_chain', []),
                 http_status=snapshot.get('http_status'), server=snapshot.get('server'), error=snapshot.get('error'),
                 certificate_validation=snapshot.get('certificate_validation'),
                 headers=[(k, v) for k, v in snapshot['headers'] if k.lower() in selected],
@@ -692,7 +718,7 @@ def attach_sources(finding, snapshot, folder, modules):
         name == 'Expired SSL Certificate' and snapshot.get('certificate_chain_validated'))
     if not is_tls:
         primary = dict(tool='WebRaptor HTTP collector (httpx)', artifact='verification_http.json',
-                       method='GET of the exact target URL; duplicate fields preserved; no redirects.',
+                       method='GET of ' + str(snapshot.get('http_url', snapshot['target'])) + '; final HTTP 200 required; duplicate fields preserved. Redirects followed: ' + str(len(snapshot.get('redirect_chain', []))) + '.',
                        status='unavailable' if snapshot.get('error') else 'captured', role='primary')
     elif direct_tls:
         primary = dict(tool='WebRaptor TLS probe (Python ssl)', artifact='verification_tls_probes.json',
@@ -759,7 +785,8 @@ def assess_target(target, args, folder, stop, run_command, redact, modules=()):
             path.write_text(redact(path.read_text(encoding='utf-8', errors='replace')), encoding='utf-8')
     capture_sources(snapshot, folder, redact)
     report = dict(target=target, checked_at=datetime.now(timezone.utc).isoformat(),
-                  scope='Exact URL response and original TLS host/port; no redirects or cross-origin scripts.',
+                  scope='HTTP findings apply to the final GET URL after at most 10 redirects; TLS findings apply to the original host/port.',
+                  http_url=snapshot.get('http_url', target), redirect_chain=snapshot.get('redirect_chain', []),
                   checks=[attach_sources(enrich_finding(check(snapshot)), snapshot, folder, modules) for check in CHECKS],
                   http_status=snapshot.get('http_status'),
                   server=snapshot.get('server', 'Unavailable' if snapshot.get('error') else 'Not recorded'),

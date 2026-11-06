@@ -14,6 +14,13 @@ TOOLS = (
 LIMIT = 65536
 
 
+def whatweb_http_200(output):
+    """Require an explicit success status from WhatWeb's verbose report."""
+    clean = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', output)
+    statuses = re.findall(r'^\s*Status\s*:\s*(\d{3})\b', clean, re.M)
+    return bool(statuses) and all(code == '200' for code in statuses)
+
+
 def collect_scanner_results(modules, folder):
     results = []
     for key, _, _ in TOOLS:
@@ -37,6 +44,8 @@ def collect_scanner_results(modules, folder):
                     data = stream.read() if key == 'dirsearch' else stream.read(LIMIT + 1)
                 output = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', (data if key == 'dirsearch' else data[:LIMIT]).decode('utf-8', errors='replace'))
                 item['truncated'] = key != 'dirsearch' and len(data) > LIMIT
+        if key == 'whatweb' and item.get('status') == 'completed' and not whatweb_http_200(output):
+            item.update(status='incomplete', error='WhatWeb requires HTTP 200; technology observations are inconclusive. Raw evidence retained.')
         item['output'] = output
         results.append(item)
     return results
@@ -48,6 +57,8 @@ def structured_output(key, output):
     def table(labels, rows):
         return '<div class="scanner-table"><table><thead><tr>' + ''.join('<th>' + esc(label) + '</th>' for label in labels) + '</tr></thead><tbody>' + ''.join('<tr>' + ''.join('<td data-label="' + esc(label) + '">' + esc(value) + '</td>' for label, value in zip(labels, row)) + '</tr>' for row in rows) + '</tbody></table></div>'
     if key == 'whatweb':
+        if not whatweb_http_200(output):
+            return '<p class="muted">HTTP 200 is required for WhatWeb results. See raw evidence below.</p>'
         fields = re.findall(r'^(Status|Title|IP|Country|Summary)\s*:\s*(.+)$', output, re.M)
         plugins = []
         for match in re.finditer(r'^\[ ([^\n]+?) \]\s*\n(.*?)(?=^\[ |^HTTP Headers:|\Z)', output, re.M | re.S):

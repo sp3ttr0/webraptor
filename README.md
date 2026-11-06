@@ -41,7 +41,7 @@ Tools run concurrently with a compact progress panel. TLS verification reuses sc
 
 ## Reports
 
-Open the target's **`report.html`** under `results/`. Keep its `data/`, `evidence/`, and `logs/` folders together so evidence links work. `data/verification.json` includes all check results; the HTML Findings Summary lists only found and verified findings. HTTP header/content checks require a GET response of 200; other statuses remain inconclusive. TLS checks use protocol and certificate evidence.
+Open the target's **`report.html`** under `results/`. Keep its `data/`, `evidence/`, and `logs/` folders together so evidence links work. `data/verification.json` includes all check results; the HTML Findings Summary lists only found and verified findings. HTTP header/content checks follow up to 10 HTTP redirects and require a final GET response of 200; other statuses remain inconclusive. Findings identify the final HTTP URL. Supplied headers are dropped when a redirect changes origin. TLS checks use protocol and certificate evidence. WhatWeb scans the resolved final URL and also requires a reported HTTP 200; other responses retain raw evidence as incomplete results.
 
 Single-target resume information is in `data/run.json`. Multi-target sessions also use `results/_runs/`.
 
