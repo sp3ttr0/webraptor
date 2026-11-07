@@ -5,19 +5,24 @@ import html
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
-RAPTOR_LOGO = '''<svg class="raptor-logo" viewBox="10 14 112 100" role="img" aria-label="WebRaptor velociraptor head logo" xmlns="http://www.w3.org/2000/svg">
-<path fill="#795cb4" stroke="#b09acb" stroke-width="2" stroke-linejoin="round" d="M17 111 23 79 12 62 24 42 37 24 57 15 76 20 88 30 112 37 121 48 117 61 91 65 74 59 62 68 77 76 100 71 113 74 104 86 80 94 61 85 53 91 51 113Z"/>
-<path fill="#a58acb" d="m24 43 17-17 17-7 16 5 10 10-24-7-20 13-13 22 8 18-8 28-6 1 6-31-11-15Z"/>
-<path fill="#241832" d="m39 43 18-12 20 5-15 13-16 1Z"/>
-<path fill="#fbbf24" d="m48 41 13-5-5 9-7 1Z"/>
-<path fill="#140d20" d="m54 38 3-1-1 7-3 1Z"/>
-<path fill="#241832" stroke="#241832" stroke-width="2" stroke-linejoin="round" d="m73 54 40-9 3 6-4 8-21 3Z"/>
-<path fill="#fff3d8" d="m80 53 7-2-2 7Zm11-3 7-1-3 8Zm11-2 7-1-3 8Z"/>
-<path fill="#241832" d="m64 72 18 7 22-4-6 9-17 5-19-9Z"/>
-<path fill="#c4b1df" d="m69 78 11 5 18-4-3 4-14 3Z"/>
-<path fill="#563671" d="m31 66 13-9-8 17 8 13-8 13 2-16Z"/>
-<ellipse cx="109" cy="40" rx="2.5" ry="1.7" fill="#241832"/>
+RAPTOR_LOGO = '''<svg class="raptor-logo" viewBox="0 0 144 116" role="img" aria-label="WebRaptor copper velociraptor head logo" xmlns="http://www.w3.org/2000/svg">
+<title>Copper velociraptor with a slender snout and feathered neck</title>
+<path fill="#9f5135" stroke="#e7bc88" stroke-width="1.8" stroke-linejoin="round" d="M19 107 25 85 17 90 24 72 14 77 23 57 20 51 32 36Q44 22 61 24L78 29 89 37 125 43Q136 45 137 51L133 59 105 64 86 61 75 69 91 79 119 69 125 73 112 86 92 94 70 84 59 94 57 108Z"/>
+<path fill="#d18c56" d="M24 55 35 37Q46 27 60 28L76 33 86 40 124 46 131 50 105 53 83 51 64 48 45 59 32 78 26 97 29 75Z"/>
+<path fill="#edc991" d="m38 42 13-11 12-1 13 5-17-1-12 8-9 12-8 8Z"/>
+<path fill="#522c2a" d="m43 47 12-11 20 3-13 11-13 1Z"/>
+<path fill="#e8b64d" d="m51 44 9-5 7 1-8 7-7 1Z"/>
+<path fill="#201c25" d="m58 40 3-1-2 8-3 1Z"/>
+<path fill="none" stroke="#f0cf9d" stroke-width="2" stroke-linecap="round" d="m46 37 12-5 17 4"/>
+<path fill="#281e26" d="m78 57 27-2 27-4-2 7-25 5-18-4-12 9 18 13 26-9-10 10-18 7-22-12-3-9Z"/>
+<path fill="#fff0cf" d="m91 57 5 1-3 6Zm10 0 5-1-2 7Zm11-2 5-1-2 7Zm10-2 5-1-3 6Z"/>
+<path fill="#e6b77e" d="m76 78 16 9 19-7-5 6-14 5-18-9Z"/>
+<path fill="#713b30" d="m40 61-9 19-2 22 8-8 6-20 10-11-4-4Z"/>
+<path fill="#e0ac72" d="m52 71 10 9-8 10-2 13-10 2 4-13Z"/>
+<path fill="none" stroke="#713b30" stroke-width="2" stroke-linecap="round" d="m28 67 8-10m-7 24 8-14m-5 29 7-13"/>
+<ellipse cx="125" cy="47" rx="2.4" ry="1.3" fill="#522c2a"/>
 </svg>'''
+
 
 DISCLAIMER = (
     'Automated results may be incomplete or inaccurate. Verified means observed, not exploited. '
