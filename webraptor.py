@@ -1055,7 +1055,7 @@ TOOL_CHECKS = {
     'nikto': (['-Version'], ['-Help'], ['-Cgidirs', '-host', '-Pause', '-ask', '-nointeractive', '-Display']),
     'waybackurls': (None, ['-h'], ['-dates', '-no-subs']),
     'dirsearch': (['--version'], ['--help-all'], ['-u', '-e', '--random-agent', '-t', '--max-rate', '-o']),
-    'nuclei': (['-version'], ['-h'], ['-u', '-jsonl', '-omit-raw', '-no-color', '-disable-redirects', '-stats', '-rate-limit', '-o']),
+    'nuclei': (['-version'], ['-h'], ['-u', '-jsonl-export', '-no-color', '-disable-redirects', '-stats', '-rate-limit', '-o']),
     'testssl': (['--version'], ['--help'], ['--quiet', '--color', '--warnings']),
     'sslscan': (['--version'], ['--help'], ['--no-colour']),
 }
@@ -1187,8 +1187,9 @@ def build_command(module, target, folder, args):
             cmd += ['-w', args.wordlist]
     else:
         artifact = folder / 'nuclei_results.jsonl'
-        cmd = ['nuclei', '-u', target, '-jsonl', '-omit-raw', '-no-color',
-               '-disable-redirects', '-stats', '-rate-limit', str(args.nuclei_rate), '-o', str(artifact)]
+        cmd = ['nuclei', '-u', target, '-no-color',
+               '-disable-redirects', '-stats', '-rate-limit', str(args.nuclei_rate),
+               '-o', str(folder/'nuclei_results.txt'), '-jsonl-export', str(artifact)]
         if args.nuclei_template:
             cmd += ['-t', args.nuclei_template]
     if module in AUTH_MODULES:
@@ -1211,7 +1212,17 @@ def redact_artifact(path, redact):
             text = item.read_text(encoding='utf-8')
         except UnicodeError:
             continue  # Screenshots/databases are raw evidence, not console logs.
-        cleaned = redact(text)
+        if item.suffix == '.jsonl':
+            from verification import redact_tree
+            lines = []
+            for line in text.splitlines():
+                try:
+                    lines.append(json.dumps(redact_tree(json.loads(line), redact), ensure_ascii=False))
+                except ValueError:
+                    lines.append(redact(line))
+            cleaned = '\n'.join(lines) + ('\n' if text.endswith('\n') else '')
+        else:
+            cleaned = redact(text)
         if cleaned != text:
             item.write_text(cleaned, encoding='utf-8')
 
@@ -1233,6 +1244,8 @@ def nuclei_findings(path, status, redact):
                     'template_id': item['template-id'], 'name': info.get('name', ''),
                     'severity': info.get('severity', 'unknown'),
                     'matched_at': item.get('matched-at', item.get('host', ''))}.items()})
+                from verification import redact_tree
+                findings[-1]['evidence'] = redact_tree({key:item[key] for key in ('request','response','extracted-results','matched-line','matcher-name','matcher-status','curl-command','timestamp','ip','type') if key in item}, redact)
             except (ValueError, AttributeError, TypeError):
                 bad_lines += 1
     if bad_lines:
@@ -1298,7 +1311,7 @@ def execute_module(module, target, folder, args, slots, stop, redact, progress_t
                 result.update(status='failed', error='Nuclei output missing or invalid; findings may be incomplete')
         elif module == 'dirsearch' and result['status'] == 'completed' and not artifact.exists():
             result.update(status='failed', error='Expected scanner output is missing')
-        sidecars = [folder/'sslscan_results.xml'] if module == 'sslscan' else [folder/'testssl_results.json'] if module == 'testssl' else [folder/'whatweb_redirects.json'] if module == 'whatweb' else []
+        sidecars = [folder/'sslscan_results.xml'] if module == 'sslscan' else [folder/'testssl_results.json'] if module == 'testssl' else [folder/'whatweb_redirects.json'] if module == 'whatweb' else [folder/'nuclei_results.txt'] if module == 'nuclei' else []
         for sidecar in sidecars:
             if sidecar.is_file():
                 redact_artifact(sidecar, redact)

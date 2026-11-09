@@ -45,6 +45,8 @@ Open the target's **`report.html`** under `results/`. Keep its `data/`, `evidenc
 
 Single-target resume information is in `data/run.json`. Multi-target sessions also use `results/_runs/`.
 
+Nuclei saves both regular text output (`nuclei_results.txt`) and JSONL (`nuclei_results.jsonl`). The report displays the regular output as evidence; JSONL retains captured match details for processing.
+
 ## Disclaimer
 
 **Only scan systems you own or have permission to test.** Automated results may be incomplete or inaccurate. Verified means observed, not exploited; missing findings do not prove security. Review evidence and remove sensitive information before sharing reports. Never commit secrets or private scan results.

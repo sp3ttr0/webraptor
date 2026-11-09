@@ -1,5 +1,6 @@
 """Bounded, escaped scanner output for offline reports."""
 import html
+import json
 import re
 from pathlib import Path
 from urllib.parse import quote, urlsplit
@@ -31,7 +32,10 @@ def collect_scanner_results(modules, folder):
         item = {k: module[k] for k in ('module', 'status', 'error', 'duration_seconds', 'reused', 'findings', 'findings_status') if k in module}
         item['artifacts'] = []
         output = ''
-        for relative in module.get('artifacts', []):
+        artifacts = module.get('artifacts', [])
+        if key == 'nuclei':
+            artifacts = sorted(artifacts, key=lambda name: not str(name).endswith('nuclei_results.txt'))
+        for relative in artifacts:
             path = Path(relative)
             if path.is_absolute() or '..' in path.parts:
                 continue
@@ -84,6 +88,62 @@ def structured_output(key, output):
     return ''
 
 
+def render_nuclei_evidence(output, captured_findings=None):
+    """Display JSONL as ordinary evidence lines; keep the original file downloadable."""
+    esc = lambda value: html.escape(str(value), quote=True)
+    def values(value):
+        if isinstance(value, dict):
+            for nested in value.values():
+                yield from values(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                yield from values(nested)
+        elif value is not None:
+            yield str(value)
+    def text_or_link(value):
+        try:
+            parsed = urlsplit(value)
+            if parsed.scheme.lower() in ('http', 'https') and parsed.netloc and not any(c.isspace() for c in value):
+                return '<a href="' + esc(value) + '" target="_blank" rel="noopener noreferrer">' + esc(value) + '</a>'
+        except ValueError:
+            pass
+        return esc(value)
+    entries = []
+    ranks = {severity: i for i, severity in enumerate(('critical', 'high', 'medium', 'low', 'info'))}
+    records = [dict(f.get('evidence', {}), template_id=f.get('template_id'), name=f.get('name'), severity=f.get('severity'), matched_at=f.get('matched_at')) for f in captured_findings] if captured_findings is not None else output.splitlines()
+    for line in records:
+        if isinstance(line, str) and not line.strip():
+            continue
+        try:
+            record = line if isinstance(line, dict) else json.loads(line)
+            if not isinstance(record, dict):
+                raise ValueError('Not a match record')
+        except (ValueError, TypeError):
+            entries.append((6, '<li class="nuclei-evidence-item"><p class="muted">Incomplete evidence entry. See the original file under Source artifacts.</p></li>'))
+            continue
+        info = record.get('info') if isinstance(record.get('info'), dict) else record
+        severity = str(info.get('severity', 'unknown')).lower()
+        tone = severity if severity in ranks else 'unknown'
+        name = info.get('name') or record.get('template-id') or record.get('template_id') or 'Scanner match'
+        title = '<div class="nuclei-match-title"><span class="nuclei-severity severity-' + tone + '">' + esc(severity) + '</span><strong>' + esc(name) + '</strong></div>'
+        fields = [('Template', record.get('template-id') or record.get('template_id')),
+                  ('URL', record.get('matched-at') or record.get('matched_at') or record.get('url')),
+                  ('Matcher', record.get('matcher-name')), ('Match recorded', record.get('matcher-status')),
+                  ('Extracted evidence', record.get('extracted-results')), ('Matched line', record.get('matched-line')),
+                  ('Captured request', record.get('request')), ('Captured response', record.get('response')),
+                  ('Reproduction command', record.get('curl-command')), ('Captured at', record.get('timestamp'))]
+        details = []
+        for label, value in fields:
+            for entry in values(value):
+                if entry.strip():
+                    details.append('<li><span class="evidence-label">' + label + ':</span> ' + ('<pre>' + esc(entry) + '</pre>' if label in ('Captured request', 'Captured response') else '<span class="evidence-value">' + text_or_link(entry) + '</span>') + '</li>')
+        if not any(record.get(key) for key in ('request','response','extracted-results','matched-line')):
+            details.append('<li class="muted">No request/response or extracted proof was saved for this match. The reproduction command alone is not captured proof.</li>')
+        entries.append((ranks.get(severity, 5), '<li class="nuclei-evidence-item">' + title + '<ul class="nuclei-evidence-lines">' + ''.join(details) + '</ul></li>'))
+    return '<ol class="nuclei-evidence-list" aria-label="Nuclei evidence entries">' + ''.join(markup for _, markup in sorted(entries, key=lambda entry: entry[0])) + '</ol>'
+
+
+
 def render_scanner_results(results):
     esc = lambda value: html.escape(str(value), quote=True)
     sections = []
@@ -125,7 +185,7 @@ def render_scanner_results(results):
         if item.get('truncated'):
             content += '<p class="muted">Output preview limited to 64 KiB. See the complete source artifacts below.</p>'
         if output.strip():
-            content += '<details class="scanner-evidence"><summary>Evidence — raw output</summary><pre>' + esc(output) + '</pre></details>'
+            content += ('<details class="scanner-evidence"><summary>Evidence — Nuclei output</summary>' + ('<ul class="nuclei-console-list" aria-label="Nuclei scanner output">' + ''.join('<li><code>' + esc(line) + '</code></li>' for line in output.splitlines() if line.strip()) + '</ul>' if not output.lstrip().startswith('{') else render_nuclei_evidence(output, item['findings'] if item.get('findings') and all('evidence' in f for f in item['findings']) else None)) + '</details>' if key == 'nuclei' else '<details class="scanner-evidence"><summary>Evidence — raw output</summary><pre>' + esc(output) + '</pre></details>')
         meta = status.replace('_', ' ')
         if item.get('duration_seconds') is not None:
             meta += ' · ' + str(item['duration_seconds']) + ' seconds'
