@@ -144,6 +144,36 @@ def render_nuclei_evidence(output, captured_findings=None):
 
 
 
+def render_nuclei_text_list(output, label='Nuclei scanner output'):
+    """Use identical native scanner lines in both the results and evidence views."""
+    esc = lambda value: html.escape(str(value), quote=True)
+    ranks = {level: rank for rank, level in enumerate(('critical', 'high', 'medium', 'low', 'info', 'unknown'))}
+    severity_pattern = re.compile(r'\[(critical|high|medium|low|info|unknown)\]', re.I)
+    token_pattern = re.compile(r"\[(?:critical|high|medium|low|info|unknown)\]|https?://[^\s<>\"']+", re.I)
+    def rank(line):
+        match = severity_pattern.search(line)
+        return ranks.get(match.group(1).lower(), 6) if match else 6
+    entries = []
+    for line in sorted((line for line in output.splitlines() if line.strip()), key=rank):
+        pieces, cursor = [], 0
+        for match in token_pattern.finditer(line):
+            pieces.append(esc(line[cursor:match.start()]))
+            token = match.group()
+            severity = severity_pattern.fullmatch(token)
+            if severity:
+                pieces.append('<span class="nuclei-severity nuclei-output-severity severity-' + severity.group(1).lower() + '">' + esc(token) + '</span>')
+            else:
+                try:
+                    valid_url = bool(urlsplit(token).netloc)
+                except ValueError:
+                    valid_url = False
+                pieces.append('<a href="' + esc(token) + '" target="_blank" rel="noopener noreferrer">' + esc(token) + '</a>' if valid_url else esc(token))
+            cursor = match.end()
+        pieces.append(esc(line[cursor:]))
+        entries.append('<li><code>' + ''.join(pieces) + '</code></li>')
+    return '<ul class="nuclei-console-list" aria-label="' + esc(label) + '">' + ''.join(entries) + '</ul>'
+
+
 def render_scanner_results(results):
     esc = lambda value: html.escape(str(value), quote=True)
     sections = []
@@ -157,7 +187,9 @@ def render_scanner_results(results):
             if not path.is_absolute() and '..' not in path.parts:
                 links.append('<a href="' + esc(quote(artifact, safe='/')) + '">' + esc(artifact) + '</a>')
         content = ''
-        if key == 'nuclei' and item.get('findings'):
+        if key == 'nuclei' and output.strip() and not output.lstrip().startswith('{'):
+            content = render_nuclei_text_list(output, 'Nuclei matches')
+        elif key == 'nuclei' and item.get('findings'):
             entries = []
             severity_order = {name: rank for rank, name in enumerate(('critical', 'high', 'medium', 'low', 'info'))}
             for finding in sorted(item['findings'], key=lambda match: severity_order.get(str(match.get('severity', 'unknown')).lower(), 5)):
@@ -185,7 +217,7 @@ def render_scanner_results(results):
         if item.get('truncated'):
             content += '<p class="muted">Output preview limited to 64 KiB. See the complete source artifacts below.</p>'
         if output.strip():
-            content += ('<details class="scanner-evidence"><summary>Evidence — Nuclei output</summary>' + ('<ul class="nuclei-console-list" aria-label="Nuclei scanner output">' + ''.join('<li><code>' + esc(line) + '</code></li>' for line in output.splitlines() if line.strip()) + '</ul>' if not output.lstrip().startswith('{') else render_nuclei_evidence(output, item['findings'] if item.get('findings') and all('evidence' in f for f in item['findings']) else None)) + '</details>' if key == 'nuclei' else '<details class="scanner-evidence"><summary>Evidence — raw output</summary><pre>' + esc(output) + '</pre></details>')
+            content += ('<details class="scanner-evidence"><summary>Evidence — Nuclei output</summary>' + (render_nuclei_text_list(output) if not output.lstrip().startswith('{') else render_nuclei_evidence(output, item['findings'] if item.get('findings') and all('evidence' in f for f in item['findings']) else None)) + '</details>' if key == 'nuclei' else '<details class="scanner-evidence"><summary>Evidence — raw output</summary><pre>' + esc(output) + '</pre></details>')
         meta = status.replace('_', ' ')
         if item.get('duration_seconds') is not None:
             meta += ' · ' + str(item['duration_seconds']) + ' seconds'
