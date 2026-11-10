@@ -1471,13 +1471,32 @@ def write_batch(folder, batch_id, results):
     summary = {'schema_version': 1, 'run_id': batch_id, 'targets': results}
     write_json(folder / 'summary.json', summary)
     rows = []
-    for result in results:
+    status_labels = {'completed': 'Completed', 'incomplete': 'Incomplete', 'failed': 'Failed',
+                     'cancelled': 'Cancelled', 'running': 'Running', 'queued': 'Queued'}
+    for number, result in enumerate(results, 1):
         path = os.path.relpath(Path(result['run_directory']) / 'report.html', folder)
-        rows.append('<li><a href="' + quote(path, safe='/') + '">' + html.escape(result['target']) +
-                    '</a> — ' + html.escape(result['status']) + '</li>')
+        status = result.get('status', 'unknown')
+        status_class = status if status in status_labels else 'unknown'
+        rows.append('<li><a class="toc-link" href="' + quote(path, safe='/') + '">'
+                    '<span class="toc-number" aria-hidden="true">' + f'{number:02d}' + '</span>'
+                    '<span class="toc-target">' + html.escape(result['target']) + '</span>'
+                    '<span class="toc-leader" aria-hidden="true"></span>'
+                    '<span class="toc-status toc-status-' + status_class + '">' +
+                    html.escape(status_labels.get(status, 'Unknown')) + '</span>'
+                    '<span class="toc-arrow" aria-hidden="true">↗</span></a></li>')
+    completed = sum(result.get('status') == 'completed' for result in results)
+    body = ('<section class="batch-toc" aria-labelledby="contentsHeading">'
+            '<div class="toc-heading"><div><span class="toc-eyebrow">Assessment index</span>'
+            '<h2 id="contentsHeading">Table of Contents <span class="finding-count">' + str(len(results)) +
+            '</span></h2><p>Open a target report to review its findings and evidence.</p></div>'
+            '<div class="toc-total"><strong>' + str(completed) + ' / ' + str(len(results)) +
+            '</strong><span>targets completed</span></div></div>'
+            '<ol class="toc-list">' + ''.join(rows) + '</ol>' +
+            ('' if rows else '<p class="scanner-empty">No target reports are available.</p>') +
+            '<div class="toc-footer"><span>Each entry links to its saved report.</span>'
+            '<a href="summary.json">Download JSON summary</a></div></section>')
     from report_ui import page
-    (folder / 'report.html').write_text(page('WebRaptor Web Application Security Assessment Report', '<section class="notice"><h2>Targets</h2><ul>' +
-        ''.join(rows) + '</ul><p><a href="summary.json">JSON summary</a></p></section>', batch_id), encoding='utf-8')
+    (folder / 'report.html').write_text(page('WebRaptor Web Application Security Assessment Report', body, batch_id), encoding='utf-8')
 
 
 def main(argv=None):

@@ -237,12 +237,15 @@ def collect_testssl_ciphers(s, args, folder, stop, run_command, redact, modules=
         if not isinstance(rows, list):
             return
         accepted = []
+        protocol_rows = []
         for row in rows:
             if not isinstance(row, dict) or str(row.get('port')) != str(port):
                 continue
             # testssl records NODE/NODEIP; exact original host must match.
             if str(row.get('ip', '')).split('/')[0].strip('[]').lower() != host.lower():
                 continue
+            if row.get('id') in ('SSLv2', 'SSLv3', 'TLS1', 'TLS1_1', 'TLS1_2', 'TLS1_3'):
+                protocol_rows.append(dict(row))
             if not re.fullmatch(r'cipher(?:-(?:ssl2|ssl3|tls1|tls1_1|tls1_2|tls1_3))?_[0-9a-fA-Fx]+', row.get('id', '')):
                 continue
             finding = row.get('finding', '')
@@ -252,6 +255,7 @@ def collect_testssl_ciphers(s, args, folder, stop, run_command, redact, modules=
             match = re.search(r'(?<![A-Za-z0-9_])(?:TLS_[A-Z0-9_]+|(?:ECDHE|DHE|ADH|AECDH|AES|CAMELLIA|SEED|DES|RC4|RC2|NULL|EXP)[A-Za-z0-9_-]+)', finding)
             if match:
                 accepted.append(dict(cipher=match.group(), source='testssl', observation=finding, probe_id=row['id']))
+        s['testssl_protocols'] = protocol_rows
         s['testssl_ciphers'] = accepted
         s['testssl_cipher_valid'] = bool(accepted)
         s['testssl_cipher_complete'] = run['status'] == 'completed'
@@ -259,33 +263,63 @@ def collect_testssl_ciphers(s, args, folder, stop, run_command, redact, modules=
         pass
 
 
-def check_tls13_disabled(s):
-    name = 'TLSv1.3 Disabled'
+def protocol_observations(s, protocol, version):
+    """Combine endpoint-validated structured probes; failed negatives prove nothing."""
+    observations = []
+    if (protocol, version) == ('tls', '1.3') and s.get('tls13') in ('enabled', 'rejected'):
+        observations.append(dict(source='Python ssl', state=s['tls13'], observations=s.get('tls13_evidence', [])))
+    label = ('SSLv' if protocol == 'ssl' else 'TLSv') + version
+    accepted = [c for c in s.get('ciphers', []) if
+                ('TLSv1.0' if c.get('sslversion') == 'TLSv1' else c.get('sslversion')) == label]
+    if accepted:
+        observations.append(dict(source='sslscan', state='enabled', accepted_ciphers=accepted))
+    protocols = s.get('protocols', [])
+    reachable = bool(s.get('ciphers')) or any(row.get('enabled') == '1' for row in protocols)
+    for row in protocols:
+        row_version = '1.0' if row.get('type') == 'tls' and str(row.get('version')) == '1' else str(row.get('version'))
+        if row.get('type') != protocol or row_version != version:
+            continue
+        if row.get('enabled') == '1':
+            observations.append(dict(source='sslscan', state='enabled', observation=row))
+        elif row.get('enabled') == '0' and s.get('cipher_scan_complete') and reachable:
+            observations.append(dict(source='sslscan', state='rejected', observation=row))
+    testssl_id = {('ssl','2'):'SSLv2', ('ssl','3'):'SSLv3', ('tls','1.0'):'TLS1',
+                  ('tls','1.1'):'TLS1_1', ('tls','1.2'):'TLS1_2', ('tls','1.3'):'TLS1_3'}[(protocol, version)]
+    rows = s.get('testssl_protocols', [])
+    offered = lambda row: re.match(r'^offered(?:\b|$)', str(row.get('finding', '')), re.I)
+    reachable = any(offered(row) for row in rows if row.get('id') != testssl_id)
+    for row in rows:
+        if row.get('id') != testssl_id:
+            continue
+        if offered(row):
+            observations.append(dict(source='testssl', state='enabled', observation=row))
+        elif s.get('testssl_cipher_complete') and reachable and re.match(r'^not offered(?:\b|$)', str(row.get('finding', '')), re.I):
+            observations.append(dict(source='testssl', state='rejected', observation=row))
+    return observations
+
+
+def protocol_result(s, protocol, version, name, finding_state):
     if s.get('tls_not_applicable'):
         return result(name, 'not_applicable')
-    status = s.get('tls13', 'unknown')
-    return result(name, {'enabled': 'not_found', 'rejected': 'found'}.get(status, 'unknown'),
-                  s.get('tls13_evidence', []),
-                  'An explicit protocol-version rejection confirms rejection from this client vantage point; other handshake failures are inconclusive.',
-                  status in ('enabled', 'rejected'))
+    observations = protocol_observations(s, protocol, version)
+    states = {item['state'] for item in observations}
+    if len(states) > 1:
+        return result(name, 'unknown', observations,
+                      'TLS/SSL probes disagree; validate endpoint/IP consistency before confirming protocol support.')
+    if not states:
+        evidence = s.get('tls13_evidence', []) if (protocol, version) == ('tls', '1.3') else []
+        return result(name, 'unknown', evidence,
+                      'No conclusive protocol evidence. Failed or incomplete connection tests do not confirm disabled support.')
+    return result(name, 'found' if finding_state in states else 'not_found', observations,
+                  'Endpoint-matched protocol evidence. Negative scanner results require a completed scan with a working protocol; connection failures alone are inconclusive.', True)
+
+
+def check_tls13_disabled(s):
+    return protocol_result(s, 'tls', '1.3', 'TLSv1.3 Disabled', 'rejected')
 
 
 def legacy_protocol(s, protocol, version, name):
-    if s.get('tls_not_applicable'):
-        return result(name, 'not_applicable')
-    evidence = [p for p in s.get('protocols', [])
-                if p.get('type') == protocol and p.get('version') == version]
-    accepted = [c for c in s.get('ciphers', [])
-                if c.get('sslversion') == ('SSLv' if protocol == 'ssl' else 'TLSv') + version]
-    if accepted or any(p.get('enabled') == '1' for p in evidence):
-        return result(name, 'found', evidence + accepted,
-                      'Endpoint-matched sslscan positively observed protocol acceptance.', True)
-    if (evidence and all(p.get('enabled') == '0' for p in evidence)
-            and s.get('cipher_scan_complete') and s.get('ciphers')):
-        return result(name, 'not_found', evidence,
-                      'No acceptance in this completed sslscan run; other protocols were reachable.', True)
-    return result(name, 'unknown', evidence,
-                  'Missing or incomplete protocol evidence is not proof the protocol is disabled.')
+    return protocol_result(s, protocol, version, name, 'enabled')
 
 
 def check_sslv2_enabled(s):
@@ -669,7 +703,7 @@ def render_report(report):
     body = '<section class="finding-group scanner-section" id="findings-summary"><div class="findings-header"><h2>Findings Summary <span class="finding-count" aria-label="' + str(len(checks)) + ' findings">' + str(len(checks)) + '</span></h2>'
     if rows:
         body += '<div class="finding-controls" role="group" aria-label="Finding controls"><button type="button" id="expandAll" aria-controls="findings-summary" aria-label="Expand all findings" title="Expand all findings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 8 5-5 5 5M7 16l5 5 5-5M5 12h14"/></svg></button><button type="button" id="collapseAll" aria-controls="findings-summary" aria-label="Collapse all findings" title="Collapse all findings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 3 5 5 5-5M7 21l5-5 5 5M5 12h14"/></svg></button></div>'
-    body += '</div><p class="group-intro">Verified findings for this target, with supporting tool evidence.</p>'
+    body += '</div><p class="group-intro">Verified findings for this target, with supporting tool evidence. Findings may include false positives; review the evidence carefully and validate each finding.</p>'
     body += ''.join(rows) if rows else '<p class="muted">No findings met the found-and-verified criteria. Review the complete check record for coverage and incomplete checks.</p>'
     body += '</section>'
     from scanner_report import render_scanner_results
@@ -734,6 +768,15 @@ def attach_sources(finding, snapshot, folder, modules):
             if not snapshot.get('cipher_scan_complete'):
                 primary['status'] = 'partial'
     sources = [primary]
+    if name in {'TLSv1.3 Disabled', 'SSLv2 Enabled', 'SSLv3 Enabled', 'TLSv1.0 Enabled', 'TLSv1.1 Enabled'}:
+        if snapshot.get('tls_xml_valid') and primary.get('tool') != 'sslscan':
+            sources.append(dict(tool='sslscan', artifact=snapshot.get('cipher_artifact', 'verification_tls.xml'),
+                                role='primary', status='captured' if snapshot.get('cipher_scan_complete') else 'partial',
+                                method='Endpoint-matched TLS protocol XML; negative results require completed probes.'))
+        if snapshot.get('testssl_protocols'):
+            sources.append(dict(tool='testssl', artifact=snapshot.get('testssl_cipher_artifact', 'verification_testssl.json'),
+                                role='primary', status='captured' if snapshot.get('testssl_cipher_complete') else 'partial',
+                                method='Endpoint-matched TLS protocol JSON; negative results require completed probes.'))
     if name == 'Weak SSL/TLS Ciphers' and snapshot.get('testssl_cipher_valid'):
         sources.append(dict(tool='testssl', artifact=snapshot.get('testssl_cipher_artifact', 'verification_testssl.json'), role='primary',
                             status='captured' if snapshot.get('testssl_cipher_complete') else 'partial',
