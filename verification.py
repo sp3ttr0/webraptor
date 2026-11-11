@@ -294,7 +294,13 @@ def protocol_observations(s, protocol, version):
     testssl_id = {('ssl','2'):'SSLv2', ('ssl','3'):'SSLv3', ('tls','1.0'):'TLS1',
                   ('tls','1.1'):'TLS1_1', ('tls','1.2'):'TLS1_2', ('tls','1.3'):'TLS1_3'}[(protocol, version)]
     rows = s.get('testssl_protocols', [])
-    offered = lambda row: re.match(r'^offered(?:\b|$)', str(row.get('finding', '')), re.I)
+    def offered(row):
+        finding = str(row.get('finding', '')).strip()
+        # testssl's socket probe reports a positive SSLv2 ServerHello using
+        # this cipher-count wording instead of the usual "offered" string.
+        return (re.match(r'^offered(?:\b|$)', finding, re.I) or
+                (row.get('id') == 'SSLv2' and
+                 re.match(r'^vulnerable with [1-9]\d* ciphers?\b', finding, re.I)))
     reachable = any(offered(row) for row in rows if row.get('id') != testssl_id)
     for row in rows:
         if row.get('id') != testssl_id:
