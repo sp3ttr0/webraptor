@@ -1044,7 +1044,8 @@ def run_command(cmd, stdout_path, stderr_path, timeout, stop, redact, on_output=
 
 def tool_executable(module):
     if module == 'testssl':
-        return shutil.which('testssl') or shutil.which('testssl.sh')
+        from verification import testssl_executable
+        return testssl_executable()
     return shutil.which(module)
 
 

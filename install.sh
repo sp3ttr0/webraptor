@@ -64,6 +64,93 @@ install_fixed_testssl() {
     git -C "$checkout" checkout --detach "$revision"
     [[ "$(git -C "$checkout" rev-parse HEAD)" == "$revision" ]] || die 'testssl revision verification failed.'
     [[ -x "$checkout/testssl.sh" ]] || die 'Pinned testssl executable is missing.'
+    log 'Applying bounded TLS record reassembly for fragmented socket responses'
+    "$PYTHON" - "$checkout/testssl.sh" <<'TLS_RECORD_PATCH'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+source = path.read_text()
+marker = '# WebRaptor TLS record reassembly v1'
+helper = r'''
+# WebRaptor TLS record reassembly v1
+# TCP reads may end inside a TLS header/body, including a HelloRetryRequest.
+# Preserve generic sockread behaviour for non-TLS/vulnerability probes.
+sockread_tls_complete() {
+     local limit="$1" maxsleep="${2:-$MAX_WAITSOCK}"
+     local deadline=$((SECONDS + maxsleep)) status hex chunk header kind major
+     local -i offset available length missing remaining received
+     local only_ccs
+     sockread "$limit" "$maxsleep"
+     status=$?
+     [[ $status -eq 0 ]] || return "$status"
+     while true; do
+          hex=$(hexdump -v -e '1/1 "%02x"' "$SOCK_REPLY_FILE")
+          received=$((${#hex} / 2))
+          [[ $received -gt 0 && $received -lt $limit ]] || break
+          offset=0; missing=0; only_ccs=true
+          while [[ $offset -lt $received ]]; do
+               header="${hex:$((offset * 2)):10}"
+               kind="${header:0:2}"; major="${header:2:2}"
+               case "$kind" in 14|15|16|17|18) ;; *) return 0 ;; esac
+               [[ -z "$major" || "$major" == 03 ]] || return 0
+               available=$((received - offset))
+               if [[ $available -lt 5 ]]; then
+                    missing=$((5 - available)); break
+               fi
+               length=$((16#${header:6:4}))
+               # TLSCiphertext is bounded; malformed lengths remain parser errors.
+               [[ $length -le 18432 ]] || return 0
+               [[ "$kind" == 14 ]] || only_ccs=false
+               if [[ $available -lt $((5 + length)) ]]; then
+                    missing=$((5 + length - available)); break
+               fi
+               offset=$((offset + 5 + length))
+          done
+          if [[ $missing -eq 0 ]]; then
+               # A compatibility CCS can arrive before the actual ServerHello.
+               "$only_ccs" && missing=5 || break
+          fi
+          [[ $((received + missing)) -le $limit ]] || break
+          remaining=$((deadline - SECONDS))
+          [[ $remaining -gt 0 ]] || return 3
+          chunk=$(mktemp "$TEMPDIR/ddrecord.XXXXXX") || return 7
+          dd bs="$((limit - received))" count=1 of="$chunk" <&5 2>/dev/null &
+          wait_kill $! "$remaining"
+          status=$?
+          if [[ -s "$chunk" ]]; then
+               cat "$chunk" >> "$SOCK_REPLY_FILE"
+          else
+               rm -f "$chunk"
+               return "$status"
+          fi
+          rm -f "$chunk"
+          # Inspect collected bytes before treating a boundary-time poll as a timeout.
+     done
+     return 0
+}
+
+'''
+if marker not in source:
+    anchor = 'tls_sockets() {\n'
+    if source.count(anchor) != 1:
+        raise SystemExit('Unexpected testssl source: TLS reader patch not applied')
+    # Initial server reply and the reply after a HelloRetryRequest both need framing.
+    for start, end in [('resend_if_hello_retry_request() {', '\n# arg1: TLS version low byte'),
+                       ('tls_sockets() {', '\n# ')] :
+        begin = source.index(start)
+        finish = source.index(end, begin + len(start))
+        block = source[begin:finish]
+        if 'sockread 32768' not in block:
+            raise SystemExit('Unexpected testssl source: TLS read site missing')
+        block = block.replace('sockread 32768', 'sockread_tls_complete 32768')
+        source = source[:begin] + block + source[finish:]
+    source = source.replace(anchor, helper + anchor, 1)
+    path.write_text(source)
+if source.count(marker) != 1 or source.count('sockread_tls_complete 32768') < 2:
+    raise SystemExit('testssl TLS reader patch validation failed')
+TLS_RECORD_PATCH
+    bash -n "$checkout/testssl.sh"
     printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$checkout/testssl.sh" > "$SCRIPT_DIR/.venv/bin/testssl"
     chmod +x "$SCRIPT_DIR/.venv/bin/testssl"
 }

@@ -21,6 +21,14 @@ import xml.etree.ElementTree as ET
 import httpx
 
 MAX_BODY = 2 * 1024 * 1024
+
+
+def testssl_executable():
+    """Use the installer-managed, pinned scanner even without venv activation."""
+    managed = Path(__file__).resolve().parent / '.tools' / 'testssl' / 'testssl.sh'
+    return shutil.which(str(managed)) or shutil.which('testssl') or shutil.which('testssl.sh')
+
+
 SECURITY_HEADERS = (
     'strict-transport-security', 'content-security-policy',
     'content-security-policy-report-only', 'x-content-type-options',
@@ -223,7 +231,7 @@ def collect_testssl_ciphers(s, args, folder, stop, run_command, redact, modules=
         run = module
         s['testssl_cipher_artifact'] = str(path.relative_to(folder))
     else:
-        executable = shutil.which('testssl') or shutil.which('testssl.sh')
+        executable = testssl_executable()
         if not executable:
             return
         endpoint = ('[' + host + ']' if ':' in host else host) + ':' + str(port)

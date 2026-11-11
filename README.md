@@ -13,7 +13,7 @@ On **Kali Linux or Parrot OS**, run as your normal user:
 source .venv/bin/activate
 ```
 
-Requires Python 3.9+, network access, and sudo for system packages. The installer installs dependencies and Nuclei templates, includes the upstream testssl session-resumption fix, and runs `--check-tools` for all eight modules. Keep the virtual environment activated.
+Requires Python 3.9+, network access, and sudo for system packages. The installer installs dependencies and Nuclei templates, includes the upstream testssl session-resumption fix and a bounded TLS record-reading patch, and runs `--check-tools` for all eight modules. WebRaptor prefers this managed testssl copy. Keep the virtual environment activated for the other tools.
 
 Installation has been validated on Kali Rolling ARM64; Parrot and x86_64 remain untested. `requirements.txt` contains Python dependencies; external scanners are installed separately by `install.sh`.
 
