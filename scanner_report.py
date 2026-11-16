@@ -9,7 +9,7 @@ TOOLS = (
     ('whatweb', 'WhatWeb', 'Web technologies and server fingerprints'),
     ('nikto', 'Nikto', 'Web server observations and scanner output'),
     ('waybackurls', 'Waybackurls', 'Historical URLs collected from public archives'),
-    ('dirsearch', 'Dirsearch', 'Discovered paths and HTTP response details'),
+    ('ffuf', 'ffuf', 'Discovered paths and HTTP response details'),
     ('nuclei', 'Nuclei', 'Template matches requiring independent validation'),
 )
 LIMIT = 65536
@@ -26,6 +26,9 @@ def collect_scanner_results(modules, folder):
     results = []
     for key, _, _ in TOOLS:
         module = next((m for m in modules if m.get('module') == key), None)
+        if key == 'ffuf' and not module:
+            # Saved reports retain their actual scanner identity.
+            module = next((m for m in modules if m.get('module') == 'dirsearch'), None)
         if not module:
             results.append({'module': key, 'status': 'not_run', 'output': '', 'artifacts': []})
             continue
@@ -45,9 +48,11 @@ def collect_scanner_results(modules, folder):
             item['artifacts'].append(relative)
             if not output and not relative.endswith(('_stderr.txt', '_stderr.log')):
                 with candidate.open('rb') as stream:
-                    data = stream.read() if key == 'dirsearch' else stream.read(LIMIT + 1)
-                output = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', (data if key == 'dirsearch' else data[:LIMIT]).decode('utf-8', errors='replace'))
-                item['truncated'] = key != 'dirsearch' and len(data) > LIMIT
+                    data = stream.read() if key == 'ffuf' else stream.read(LIMIT + 1)
+                output = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', (data if key == 'ffuf' else data[:LIMIT]).decode('utf-8', errors='replace'))
+                item['truncated'] = key != 'ffuf' and len(data) > LIMIT
+            if key == 'ffuf' and relative.endswith('ffuf_stdout.log'):
+                item['raw_output'] = candidate.read_text(encoding='utf-8', errors='replace')[:LIMIT]
         if key == 'whatweb' and item.get('status') == 'completed' and not whatweb_http_200(output):
             item.update(status='incomplete', error='WhatWeb requires HTTP 200; technology observations are inconclusive. Raw evidence retained.')
         item['output'] = output
@@ -76,14 +81,26 @@ def structured_output(key, output):
             if match:
                 rows.append((match[1], match[2]))
         return table(('Check ID', 'Scanner observation'), rows) if rows else ''
-    if key == 'dirsearch':
+    if key in ('ffuf', 'dirsearch'):
         rows = []
-        for line in output.splitlines():
-            match = re.match(r'^\s*(\d{3})\s+(\S+)\s+(https?://\S+)(?:\s+(.*))?$', line)
-            if match:
-                rows.append((match[1], match[2], match[3], match[4] or ''))
-        return ('<div class="dirsearch-list" role="list" aria-label="Dirsearch results"><div class="dirsearch-line dirsearch-labels" aria-hidden="true"><span>Response code</span><span>Size</span><span>URL</span></div>' + ''.join(
-            '<div class="dirsearch-line" role="listitem"><span aria-label="Response code">' + '<span class="response-code response-' + code[0] + 'xx">' + esc(code) + '</span></span><span aria-label="Size">' + esc(size) + '</span><a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(url) + '</a></div>'
+        if key == 'ffuf':
+            try:
+                records = json.loads(output)['results']
+                for record in records:
+                    url, code, size = record.get('url', ''), record.get('status'), record.get('length')
+                    if (isinstance(url, str) and urlsplit(url).scheme in ('http', 'https')
+                            and urlsplit(url).netloc and type(code) is int and 100 <= code <= 599
+                            and type(size) is int and size >= 0):
+                        rows.append((str(code), str(size) + ' B', url, ''))
+            except (ValueError, KeyError, TypeError, AttributeError):
+                return ''
+        else:
+            for line in output.splitlines():
+                match = re.match(r'^\s*(\d{3})\s+(\S+)\s+(https?://\S+)(?:\s+(.*))?$', line)
+                if match:
+                    rows.append((match[1], match[2], match[3], match[4] or ''))
+        return ('<div class="discovery-list" role="list" aria-label="Discovered paths"><div class="discovery-line discovery-labels" aria-hidden="true"><span>Response code</span><span>Size</span><span>URL</span></div>' + ''.join(
+            '<div class="discovery-line" role="listitem"><span aria-label="Response code">' + '<span class="response-code response-' + code[0] + 'xx">' + esc(code) + '</span></span><span aria-label="Size">' + esc(size) + '</span><a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(url) + '</a></div>'
             for code, size, url, _ in sorted(rows, key=lambda row: (int(row[0]), row[2]))) + '</div>') if rows else ''
     return ''
 
@@ -179,6 +196,10 @@ def render_scanner_results(results):
     sections = []
     for key, title, description in TOOLS:
         item = next((r for r in results if r.get('module') == key), {})
+        if key == 'ffuf' and not item:
+            item = next((r for r in results if r.get('module') == 'dirsearch'), {})
+            if item:
+                key, title = 'dirsearch', 'Dirsearch (saved scan)'
         status = item.get('status', 'not_run')
         output = item.get('output', '')
         links = []
@@ -217,7 +238,7 @@ def render_scanner_results(results):
         if item.get('truncated'):
             content += '<p class="muted">Output preview limited to 64 KiB. See the complete source artifacts below.</p>'
         if output.strip():
-            content += ('<details class="scanner-evidence"><summary>Evidence — Nuclei output</summary>' + (render_nuclei_text_list(output) if not output.lstrip().startswith('{') else render_nuclei_evidence(output, item['findings'] if item.get('findings') and all('evidence' in f for f in item['findings']) else None)) + '</details>' if key == 'nuclei' else '<details class="scanner-evidence"><summary>Evidence — raw output</summary><pre>' + esc(output) + '</pre></details>')
+            content += ('<details class="scanner-evidence"><summary>Evidence — Nuclei output</summary>' + (render_nuclei_text_list(output) if not output.lstrip().startswith('{') else render_nuclei_evidence(output, item['findings'] if item.get('findings') and all('evidence' in f for f in item['findings']) else None)) + '</details>' if key == 'nuclei' else '<details class="scanner-evidence"><summary>Evidence — raw output</summary><pre>' + esc(item.get('raw_output', 'See Source artifacts for raw ffuf output.' if key == 'ffuf' else output)) + '</pre></details>')
         meta = status.replace('_', ' ')
         if item.get('duration_seconds') is not None:
             meta += ' · ' + str(item['duration_seconds']) + ' seconds'

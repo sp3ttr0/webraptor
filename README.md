@@ -2,7 +2,7 @@
 
 Web application security scanning with eight tools, automatic finding verification, and HTML/JSON reports.
 
-**Tools:** curl, WhatWeb, Nikto, Waybackurls, Dirsearch, Nuclei, testssl.sh, and sslscan.
+**Tools:** curl, WhatWeb, Nikto, Waybackurls, ffuf, Nuclei, testssl.sh, and sslscan.
 
 ## Install
 
@@ -15,7 +15,7 @@ source .venv/bin/activate
 
 Requires Python 3.9+, network access, and sudo for system packages. The installer installs dependencies and Nuclei templates, includes the upstream testssl session-resumption fix and a bounded TLS record-reading patch, and runs `--check-tools` for all eight modules. WebRaptor prefers this managed testssl copy. Keep the virtual environment activated for the other tools.
 
-Installation has been validated on Kali Rolling ARM64; Parrot and x86_64 remain untested. `requirements.txt` contains Python dependencies; external scanners are installed separately by `install.sh`.
+The ffuf integration has been tested locally on macOS; the updated installer still needs a fresh Kali/Parrot validation. `requirements.txt` contains Python dependencies; external scanners are installed separately by `install.sh`.
 
 ## Usage
 
@@ -36,6 +36,8 @@ python webraptor.py --resume results/<target>/<run-id>/data/run.json
 python webraptor.py --check-tools
 python webraptor.py --help
 ```
+
+ffuf uses the installed Dirb common wordlist by default; use `-w FILE` for a custom list, `-fr` / `--ffuf-rate` for the request rate, and `-ft` / `--ffuf-threads` for workers. Its report lists response codes, sizes, and URLs; raw output stays in logs.
 
 Tools run concurrently with a compact progress panel. TLS verification reuses scanner artifacts without duplicate scans. Resume reuses eligible outputs; supply authentication again if needed.
 

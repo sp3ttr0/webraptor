@@ -38,16 +38,6 @@ install_distro_tool() {
     die "No package or executable found for $executable. Check your official Kali/Parrot apt sources."
 }
 
-wrap_distro_dirsearch() {
-    # Kali's /usr/bin/dirsearch is a shell launcher using bare python3.
-    # Keep its distro Python dependencies separate from WebRaptor's venv.
-    local system_path='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
-    local distro_dirsearch
-    distro_dirsearch="$(PATH="$system_path" command -v dirsearch)" || die 'Distro Dirsearch executable is missing.'
-    printf '#!/usr/bin/env bash\nexport PATH=%q\nexec %q "$@"\n' "$system_path" "$distro_dirsearch" > "$SCRIPT_DIR/.venv/bin/dirsearch"
-    chmod +x "$SCRIPT_DIR/.venv/bin/dirsearch"
-}
-
 install_fixed_testssl() {
     # Upstream stable-branch fix for the TLS 1.3 post-handshake ticket race (#3188).
     local revision='216827365345f8abdb97c177636809a10e64fbe5'
@@ -233,7 +223,7 @@ finish_install() {
 log 'Installing/updating Nuclei templates (no target scan)'
 nuclei -update-templates
 log 'Checking all eight scanner versions and required CLI flags'
-if ! "$PYTHON" "$SCRIPT_DIR/webraptor.py" --check-tools --modules curl,whatweb,nikto,waybackurls,dirsearch,nuclei,testssl,sslscan; then
+if ! "$PYTHON" "$SCRIPT_DIR/webraptor.py" --check-tools --modules curl,whatweb,nikto,waybackurls,ffuf,nuclei,testssl,sslscan; then
     die 'One or more scanner checks failed. Review the version/flag diagnostics above; installation is not verified.'
 fi
 log 'All eight modules passed --check-tools.'
@@ -288,16 +278,9 @@ install_distro_tool nikto nikto
 install_distro_tool testssl testssl.sh testssl
 install_fixed_testssl
 install_distro_tool sslscan sslscan
-if package_available dirsearch; then
-    apt_install dirsearch
-    wrap_distro_dirsearch
-elif ! command -v dirsearch >/dev/null; then
-    log 'Installing Dirsearch in its own isolated Python environment'
-    python3 -m venv "$SCRIPT_DIR/.tools/dirsearch"
-    "$SCRIPT_DIR/.tools/dirsearch/bin/python" -m pip install --upgrade pip
-    "$SCRIPT_DIR/.tools/dirsearch/bin/python" -m pip install 'dirsearch>=0.4.3,<1'
-    ln -s "$SCRIPT_DIR/.tools/dirsearch/bin/dirsearch" "$SCRIPT_DIR/.venv/bin/dirsearch"
-fi
+install_distro_tool ffuf ffuf
+apt_install dirb  # Provides the default content-discovery wordlist.
+[[ -r /usr/share/dirb/wordlists/common.txt ]] || die 'Default ffuf wordlist is missing after installing dirb.'
 
 install_go_tool waybackurls github.com/tomnomnom/waybackurls@latest
 install_go_tool nuclei github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest

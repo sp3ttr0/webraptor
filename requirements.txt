@@ -17,7 +17,7 @@ httpx>=0.27,<1
 # whatweb      https://github.com/urbanadventurer/WhatWeb
 # nikto        https://github.com/sullo/nikto
 # waybackurls  https://github.com/tomnomnom/waybackurls
-# dirsearch    https://github.com/maurosoria/dirsearch
+# ffuf         https://github.com/ffuf/ffuf
 # nuclei       https://github.com/projectdiscovery/nuclei
 # testssl      https://github.com/testssl/testssl.sh
 #              Either testssl or testssl.sh is accepted.
@@ -27,7 +27,7 @@ httpx>=0.27,<1
 # - Ruby and WhatWeb's required gems: ipaddr, addressable, json.
 #   Newer Ruby installations may also require getoptlong.
 # - Perl and Nikto's upstream runtime modules/database.
-# - Python and Dirsearch's own dependencies/default wordlist, managed separately.
+# - Dirb common.txt wordlist for ffuf (or a custom --wordlist).
 # - Bash, OpenSSL and testssl's upstream runtime utilities/data files.
 # - sslscan's OpenSSL runtime libraries (or a supported statically linked build).
 # - Nuclei templates, or a compatible template supplied via --nuclei-template.

@@ -62,9 +62,9 @@ def print_banner():
     print(f"{Fore.CYAN}{banner}{Style.RESET_ALL}")
 
 
-MODULES = ('curl', 'whatweb', 'nikto', 'waybackurls', 'dirsearch', 'nuclei', 'testssl', 'sslscan')
+MODULES = ('curl', 'whatweb', 'nikto', 'waybackurls', 'ffuf', 'nuclei', 'testssl', 'sslscan')
 TLS_MODULES = {'testssl', 'sslscan'}
-AUTH_MODULES = {'testssl', 'curl', 'whatweb', 'nikto', 'dirsearch', 'nuclei'}
+AUTH_MODULES = {'testssl', 'curl', 'whatweb', 'nikto', 'ffuf', 'nuclei'}
 STOP = threading.Event()
 
 
@@ -177,7 +177,7 @@ def parse_args(argv=None):
   python webraptor.py https://example.com
   python webraptor.py -l targets.txt --threads 4
   python webraptor.py https://example.com --modules curl,whatweb,nikto
-  python webraptor.py https://example.com --exclude nuclei,dirsearch
+  python webraptor.py https://example.com --exclude nuclei,ffuf
   python webraptor.py https://example.com --headers-file headers.txt
   python webraptor.py --resume results/<target>/<run-id>/data/run.json
   python webraptor.py --check-tools
@@ -189,18 +189,18 @@ def parse_args(argv=None):
     targets.add_argument('-r', '--resume', metavar='PATH', help='Resume from a previous run folder, its data/ folder, or run.json. Creates a new run and reuses eligible outputs. Supply authentication again; do not combine with a new target.')
     scanners = parser.add_argument_group('Scanner selection and tool checks')
     scanners.add_argument('-ct', '--check-tools', action='store_true', help='Check installed scanner versions and required options, then exit without scanning. Takes no target; respects --modules and --exclude.')
-    scanners.add_argument('-m', '--modules', metavar='NAMES', default=','.join(MODULES), help='Run only these comma-separated scanners. Choices: curl, whatweb, nikto, waybackurls, dirsearch, nuclei, testssl, sslscan. Default: all eight.')
-    scanners.add_argument('-x', '--exclude', metavar='NAMES', action='append', default=[], help='Skip comma-separated scanners from the selected modules. May be repeated. Example: --exclude nuclei,dirsearch.')
+    scanners.add_argument('-m', '--modules', metavar='NAMES', default=','.join(MODULES), help='Run only these comma-separated scanners. Choices: curl, whatweb, nikto, waybackurls, ffuf, nuclei, testssl, sslscan. Default: all eight.')
+    scanners.add_argument('-x', '--exclude', metavar='NAMES', action='append', default=[], help='Skip comma-separated scanners from the selected modules. May be repeated. Example: --exclude nuclei,ffuf.')
     scanners.add_argument('-nt', '--nuclei-template', metavar='PATH', help='Use a Nuclei template file or directory. Default: Nuclei chooses from its installed templates.')
-    scanners.add_argument('-w', '--wordlist', metavar='FILE', help='Use this list of paths for Dirsearch. Default: Dirsearch uses its installed wordlist.')
+    scanners.add_argument('-w', '--wordlist', metavar='FILE', help='Use this list of paths for ffuf. Default: installed Dirb common.txt (or SecLists common.txt).')
     pace = parser.add_argument_group('Concurrency, request rates, and time limits')
-    pace.add_argument('-t', '--threads', metavar='COUNT', type=positive_int, default=6, help='Maximum scanner processes running at once across all targets. This is separate from Dirsearch request threads. Default: 6.')
+    pace.add_argument('-t', '--threads', metavar='COUNT', type=positive_int, default=6, help='Maximum scanner processes running at once across all targets. This is separate from ffuf request threads. Default: 6.')
     pace.add_argument('-tc', '--target-concurrency', metavar='COUNT', type=positive_int, default=1, help='Number of targets scanned at the same time. They share the --threads limit. Default: 1.')
     pace.add_argument('-tt', '--tool-timeout', metavar='SECONDS', type=positive_float, default=1800, help='Stop an individual scanner after this many seconds and keep its partial output. Default: 1800 (30 minutes).')
-    pace.add_argument('-pt', '--probe-timeout', metavar='SECONDS', type=positive_float, default=8, help='Timeout for HTTP reachability, redirect/verification requests, and direct TLS probes. Default: 8.')
+    pace.add_argument('-pt', '--probe-timeout', metavar='SECONDS', type=positive_float, default=8, help='Timeout for HTTP reachability, verification, ffuf requests, and direct TLS probes. Default: 8.')
     pace.add_argument('-nr', '--nuclei-rate', metavar='REQUESTS', type=positive_int, default=20, help='Maximum Nuclei requests per second per scanner process. Default: 20.')
-    pace.add_argument('-dr', '--dirsearch-rate', metavar='REQUESTS', type=positive_int, default=10, help='Maximum Dirsearch requests per second per scanner process. Default: 10.')
-    pace.add_argument('-dt', '--dirsearch-threads', metavar='COUNT', type=positive_int, default=10, help='Concurrent request workers inside each Dirsearch process. Requests also obey --dirsearch-rate. Default: 10.')
+    pace.add_argument('-fr', '--ffuf-rate', metavar='REQUESTS', type=positive_int, default=10, help='Maximum ffuf requests per second per scanner process. Default: 10.')
+    pace.add_argument('-ft', '--ffuf-threads', metavar='COUNT', type=positive_int, default=10, help='Concurrent request workers inside each ffuf process. Requests also obey --ffuf-rate. Default: 10.')
     pace.add_argument('-ww', '--whatweb-wait', metavar='SECONDS', type=positive_int, default=1, help='Whole seconds WhatWeb waits between connections. Default: 1.')
     pace.add_argument('-np', '--nikto-pause', metavar='SECONDS', type=positive_float, default=1, help='Seconds Nikto waits between requests; decimals are allowed, such as 0.5. Default: 1.')
     connection = parser.add_argument_group('HTTP and HTTPS connections')
@@ -271,6 +271,8 @@ def parse_args(argv=None):
                     raise ValueError('Invalid --' + option.replace('_', '-') + ' path')
                 setattr(args, option, str(path))
         args.headers = read_headers(args)
+        if 'ffuf' in args.modules and not args.check_tools:
+            args.wordlist = ffuf_wordlist(args)
         lines = Path(args.targets_file).read_text(encoding='utf-8').splitlines() if args.targets_file else ([args.target] if args.target else [])
         targets = {}
         for line in lines:
@@ -300,7 +302,7 @@ def parse_args(argv=None):
 # Scan settings are persisted without authentication values or input-file contents.
 SAVED_SETTINGS = ('modules', 'threads', 'target_concurrency', 'tool_timeout', 'probe_timeout',
                   'allow_scheme_fallback', 'insecure', 'nuclei_template', 'wordlist',
-                  'nuclei_rate', 'dirsearch_rate', 'dirsearch_threads', 'whatweb_wait', 'nikto_pause')
+                  'nuclei_rate', 'ffuf_rate', 'ffuf_threads', 'whatweb_wait', 'nikto_pause')
 
 
 def load_resume(location):
@@ -318,13 +320,23 @@ def load_resume(location):
     if not target_layout and not session_layout:
         raise ValueError('Manifest must remain in its original target or session layout')
     data['settings'].pop('js_advisories', None)  # Ignore the retired JavaScript-advisory setting in older v1 runs.
+    if 'dirsearch' in data['settings'].get('modules', []):
+        # Preserve other eligible scanner outputs; discovery must run anew.
+        data['settings']['modules'] = ['ffuf' if m == 'dirsearch' else m for m in data['settings']['modules']]
+        for old, new in (('dirsearch_rate', 'ffuf_rate'), ('dirsearch_threads', 'ffuf_threads')):
+            data['settings'][new] = data['settings'].pop(old)
+    else:
+        # Older runs may have excluded discovery but still saved its settings.
+        for old, new in (('dirsearch_rate', 'ffuf_rate'), ('dirsearch_threads', 'ffuf_threads')):
+            if old in data['settings'] and new not in data['settings']:
+                data['settings'][new] = data['settings'].pop(old)
     if set(data['settings']) != set(SAVED_SETTINGS):
         raise ValueError('Incomplete settings')
     settings = data['settings']
     if (not isinstance(settings['modules'], list) or not settings['modules']
             or any(m not in MODULES for m in settings['modules'])):
         raise ValueError('Invalid modules')
-    for key in ('threads', 'target_concurrency', 'nuclei_rate', 'dirsearch_rate', 'dirsearch_threads', 'whatweb_wait'):
+    for key in ('threads', 'target_concurrency', 'nuclei_rate', 'ffuf_rate', 'ffuf_threads', 'whatweb_wait'):
         if type(settings[key]) is not int or settings[key] < 1:
             raise ValueError('Invalid numeric settings')
     for key in ('tool_timeout', 'probe_timeout', 'nikto_pause'):
@@ -399,7 +411,7 @@ def reusable_results(target, args):
 
 
 class Progress:
-    LABELS = {'whatweb': 'WhatWeb', 'nikto': 'Nikto', 'dirsearch': 'Dirsearch',
+    LABELS = {'whatweb': 'WhatWeb', 'nikto': 'Nikto', 'ffuf': 'ffuf',
               'nuclei': 'Nuclei', 'waybackurls': 'Waybackurls',
               'verification': 'Finding Verification'}
     OUTCOMES = {'completed': 'Finished', 'incomplete': 'Incomplete', 'failed': 'Failed', 'timed_out': 'Timed Out',
@@ -561,10 +573,11 @@ class Progress:
                     activity['timing'] = timing[1]
             return
         match = None
-        if module == 'dirsearch':
-            match = re.search(r'^\s*(?:\[[# \-]*\]\s*)?(\d{1,3}(?:\.\d+)?)%\s+(\d+)\s*/\s*(\d+)(?:\s+([\d.]+)\s*/s)?', text)
+        if module == 'ffuf':
+            match = re.search(r'Progress: \[(\d+)/(\d+)\].*?([\d.]+) req/sec.*?Errors: (\d+)', text)
             if match:
-                percent, done, total, rate = match[1], match[2], match[3], match[4]
+                done, total, rate = match[1], match[2], match[3]
+                percent = 100 * int(done) / int(total) if int(total) else -1
         elif module == 'nuclei':
             if text.lstrip().startswith('{'):
                 try:
@@ -594,7 +607,8 @@ class Progress:
         with self.lock:
             key = (target_key(target), module)
             if self.states.get(key, (None,))[0] == 'running':
-                self.percentages[key] = float(percent)
+                if module != 'ffuf':
+                    self.percentages[key] = float(percent)
                 self.scanner_metrics[key] = {
                     'done': done, 'total': total, 'rate': rate,
                     'errors': errors[1] if errors else None, 'updated': time.monotonic()}
@@ -650,7 +664,7 @@ class Progress:
                 activity = self.nikto_activity.get(key, {})
                 if key[1] == 'nikto':
                     age = now - activity.get('progress_at', since)
-                stale = key[1] in ('dirsearch', 'nuclei', 'nikto') and status == 'running' and age >= self.stale_after
+                stale = key[1] in ('ffuf', 'nuclei', 'nikto') and status == 'running' and age >= self.stale_after
                 tls_activity = self.tls_activity.get(key, {})
                 tls_age = now - tls_activity.get('output_at', since)
                 if key[1] in ('testssl', 'sslscan') and status == 'running':
@@ -737,7 +751,7 @@ class Progress:
                     output_age = now - activity.get('output_at', since)
                     output_text = f'Last output: {output_age:.0f}s ago' if activity else f'Awaiting output: {output_age:.0f}s'
                     rows.append((status, '  ' + output_text))
-                if key[1] in ('dirsearch', 'nuclei') and status == 'running':
+                if key[1] in ('ffuf', 'nuclei') and status == 'running':
                     if metrics:
                         rate = metrics['rate'] + '/s' if metrics['rate'] is not None else 'unknown rate'
                         errors = metrics['errors'] if metrics['errors'] is not None else '?'
@@ -981,7 +995,15 @@ def run_command(cmd, stdout_path, stderr_path, timeout, stop, redact, on_output=
                     if not block:
                         break
                     offsets[index] += len(block)
-                    parts = re.split(rb'[\r\n]|\x1b\[1K\x1b\[0G', pending[index] + block)
+                    combined = pending[index] + block
+                    if Path(cmd[0]).name == 'ffuf' and index == 1:
+                        # Noninteractive ffuf can concatenate progress frames
+                        # without CR/LF. Delimit complete frames for the panel;
+                        # the evidence stream above remains byte-for-byte raw.
+                        combined = re.sub(
+                            rb'(:: Progress: \[\d+/\d+\].*?Errors: \d+ ::)',
+                            rb'\1\n', combined)
+                    parts = re.split(rb'[\r\n]|\x1b\[1K\x1b\[0G', combined)
                     pending[index] = parts.pop()
                     for part in parts:
                         if not dropping[index]:
@@ -1055,7 +1077,7 @@ TOOL_CHECKS = {
     'whatweb': (['--version'], ['--help'], ['--color', '--max-threads', '--wait', '--follow-redirect', '-v']),
     'nikto': (['-Version'], ['-Help'], ['-Cgidirs', '-host', '-Pause', '-ask', '-nointeractive', '-Display']),
     'waybackurls': (None, ['-h'], ['-dates', '-no-subs']),
-    'dirsearch': (['--version'], ['--help-all'], ['-u', '-e', '--random-agent', '-t', '--max-rate', '-o']),
+    'ffuf': (['-V'], ['-h'], ['-u', '-w', '-t', '-rate', '-timeout', '-noninteractive', '-mc', '-of', '-o', '-D', '-e']),
     'nuclei': (['-version'], ['-h'], ['-u', '-jsonl-export', '-no-color', '-disable-redirects', '-stats', '-rate-limit', '-o']),
     'testssl': (['--version'], ['--help'], ['--quiet', '--color', '--warnings']),
     'sslscan': (['--version'], ['--help'], ['--no-colour']),
@@ -1077,7 +1099,7 @@ def check_tools(args):
             flags.append({'nikto': '-Add-header', 'testssl': '--reqheader'}.get(module, '-H'))
         if module == 'curl':
             flags.append('--insecure')
-        if module == 'dirsearch':
+        if module == 'ffuf':
             flags.append('-w')
         if module == 'nuclei':
             flags.append('-t')
@@ -1089,11 +1111,6 @@ def check_tools(args):
                 output = ''.join(p.read_text() for p in (folder / 'out', folder / 'err') if p.exists())
                 return result, re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', output)
             help_result, help_text = probe(help_args)
-            # Released dirsearch versions may expose their full CLI through --help.
-            if module == 'dirsearch' and help_result['status'] == 'failed':
-                help_result, help_text = probe(['--help'])
-            if module == 'dirsearch' and not dirsearch_format_flag(help_text):
-                flags.append('--format or --output-formats')
             missing = [flag for flag in flags if not re.search(r'(?<![\w-])' + re.escape(flag) + r'(?![\w-])', help_text)]
             version = 'not exposed by upstream; executable SHA256 ' + file_digest(Path(executable))[:16]
             version_ok = True
@@ -1122,26 +1139,14 @@ def tls_endpoint(target):
     return host + ':' + str(parsed.port or 443)
 
 
-def dirsearch_format_flag(help_text):
-    """Select the report option advertised by the installed release."""
-    for flag in ('--output-formats', '--format'):
-        if re.search(r'(?<![\w-])' + re.escape(flag) + r'(?![\w-])', help_text):
-            return flag
-    return None
-
-
-def installed_dirsearch_format():
-    executable = tool_executable('dirsearch') or 'dirsearch'
-    with tempfile.TemporaryDirectory(prefix='webraptor-dirsearch-') as temp:
-        folder = Path(temp)
-        for option in ('--help-all', '--help'):
-            run_command([executable, option], folder / 'out', folder / 'err',
-                        10, threading.Event(), Redactor())
-            text = ''.join(p.read_text() for p in (folder / 'out', folder / 'err') if p.exists())
-            flag = dirsearch_format_flag(text)
-            if flag:
-                return flag
-    raise RuntimeError('Dirsearch does not advertise a supported report format option; run --check-tools')
+def ffuf_wordlist(args):
+    if args.wordlist:
+        return str(Path(args.wordlist).expanduser().resolve())
+    for name in ('/usr/share/dirb/wordlists/common.txt',
+                 '/usr/share/seclists/Discovery/Web-Content/common.txt'):
+        if Path(name).is_file():
+            return name
+    raise ValueError('ffuf needs a wordlist: use -w FILE or install dirb')
 
 
 def scanner_failure(module, paths):
@@ -1179,13 +1184,15 @@ def build_command(module, target, folder, args):
     elif module == 'waybackurls':
         artifact = folder / 'wayback_results' / 'urls.txt'
         cmd = ['waybackurls', urlsplit(target).hostname]
-    elif module == 'dirsearch':
-        artifact = folder / 'dirsearch_results' / 'results.txt'
-        cmd = ['dirsearch', '-u', target, '-e', 'php,asp,aspx,jsp,html,js,json',
-               '--random-agent', '-t', str(args.dirsearch_threads),
-               '--max-rate', str(args.dirsearch_rate), installed_dirsearch_format(), 'plain', '-o', str(artifact)]
-        if args.wordlist:
-            cmd += ['-w', args.wordlist]
+    elif module == 'ffuf':
+        artifact = folder / 'ffuf_results.json'
+        parsed = urlsplit(target)
+        discovery_url = parsed._replace(path=parsed.path.rstrip('/') + '/FUZZ', fragment='').geturl()
+        cmd = ['ffuf', '-u', discovery_url, '-w', ffuf_wordlist(args),
+               '-D', '-e', 'php,asp,aspx,jsp,html,js,json',
+               '-t', str(args.ffuf_threads), '-rate', str(args.ffuf_rate),
+               '-timeout', str(max(1, int(args.probe_timeout))),
+               '-noninteractive', '-mc', 'all', '-of', 'json', '-o', str(artifact)]
     else:
         artifact = folder / 'nuclei_results.jsonl'
         cmd = ['nuclei', '-u', target, '-no-color',
@@ -1310,8 +1317,16 @@ def execute_module(module, target, folder, args, slots, stop, redact, progress_t
             result['findings'], result['findings_status'] = nuclei_findings(artifact, result['status'], redact)
             if result['status'] == 'completed' and result['findings_status'] != 'complete':
                 result.update(status='failed', error='Nuclei output missing or invalid; findings may be incomplete')
-        elif module == 'dirsearch' and result['status'] == 'completed' and not artifact.exists():
-            result.update(status='failed', error='Expected scanner output is missing')
+        elif module == 'ffuf' and result['status'] == 'completed':
+            try:
+                data = json.loads(artifact.read_text(encoding='utf-8'))
+                if not isinstance(data, dict) or not isinstance(data.get('results'), list):
+                    raise ValueError('Invalid ffuf results')
+                errors = re.findall(r'Errors: (\d+)', stderr.read_text(encoding='utf-8', errors='replace'))
+                if errors and int(errors[-1]):
+                    result.update(status='incomplete', error='ffuf reported request errors; partial results and raw evidence retained.')
+            except (OSError, ValueError, TypeError):
+                result.update(status='failed', error='ffuf JSON output missing or invalid; raw evidence retained.')
         sidecars = [folder/'sslscan_results.xml'] if module == 'sslscan' else [folder/'testssl_results.json'] if module == 'testssl' else [folder/'whatweb_redirects.json'] if module == 'whatweb' else [folder/'nuclei_results.txt'] if module == 'nuclei' else []
         for sidecar in sidecars:
             if sidecar.is_file():
