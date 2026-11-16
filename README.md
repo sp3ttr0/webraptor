@@ -37,7 +37,7 @@ python webraptor.py --check-tools
 python webraptor.py --help
 ```
 
-ffuf uses the installed Dirb common wordlist by default; use `-w FILE` for a custom list, `-fr` / `--ffuf-rate` for the request rate, and `-ft` / `--ffuf-threads` for workers. Its report lists response codes, sizes, and URLs; raw output stays in logs.
+ffuf prefers `/usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt` when available, then falls back to Dirb `common.txt` or SecLists `common.txt`. Use `-w FILE` for a custom list, `-fr` / `--ffuf-rate` for the request rate, and `-ft` / `--ffuf-threads` for workers. Its report lists response codes, sizes, and URLs; raw output stays in logs.
 
 Tools run concurrently with a compact progress panel. TLS verification reuses scanner artifacts without duplicate scans. Resume reuses eligible outputs; supply authentication again if needed.
 

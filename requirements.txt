@@ -27,7 +27,8 @@ httpx>=0.27,<1
 # - Ruby and WhatWeb's required gems: ipaddr, addressable, json.
 #   Newer Ruby installations may also require getoptlong.
 # - Perl and Nikto's upstream runtime modules/database.
-# - Dirb common.txt wordlist for ffuf (or a custom --wordlist).
+# - ffuf prefers SecLists directory-list-2.3-medium.txt when available,
+#   then Dirb common.txt or SecLists common.txt (or a custom --wordlist).
 # - Bash, OpenSSL and testssl's upstream runtime utilities/data files.
 # - sslscan's OpenSSL runtime libraries (or a supported statically linked build).
 # - Nuclei templates, or a compatible template supplied via --nuclei-template.

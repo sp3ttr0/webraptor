@@ -192,7 +192,7 @@ def parse_args(argv=None):
     scanners.add_argument('-m', '--modules', metavar='NAMES', default=','.join(MODULES), help='Run only these comma-separated scanners. Choices: curl, whatweb, nikto, waybackurls, ffuf, nuclei, testssl, sslscan. Default: all eight.')
     scanners.add_argument('-x', '--exclude', metavar='NAMES', action='append', default=[], help='Skip comma-separated scanners from the selected modules. May be repeated. Example: --exclude nuclei,ffuf.')
     scanners.add_argument('-nt', '--nuclei-template', metavar='PATH', help='Use a Nuclei template file or directory. Default: Nuclei chooses from its installed templates.')
-    scanners.add_argument('-w', '--wordlist', metavar='FILE', help='Use this list of paths for ffuf. Default: installed Dirb common.txt (or SecLists common.txt).')
+    scanners.add_argument('-w', '--wordlist', metavar='FILE', help='Use this list of paths for ffuf. Default: SecLists directory-list-2.3-medium.txt when installed, then Dirb common.txt or SecLists common.txt.')
     pace = parser.add_argument_group('Concurrency, request rates, and time limits')
     pace.add_argument('-t', '--threads', metavar='COUNT', type=positive_int, default=6, help='Maximum scanner processes running at once across all targets. This is separate from ffuf request threads. Default: 6.')
     pace.add_argument('-tc', '--target-concurrency', metavar='COUNT', type=positive_int, default=1, help='Number of targets scanned at the same time. They share the --threads limit. Default: 1.')
@@ -1142,7 +1142,8 @@ def tls_endpoint(target):
 def ffuf_wordlist(args):
     if args.wordlist:
         return str(Path(args.wordlist).expanduser().resolve())
-    for name in ('/usr/share/dirb/wordlists/common.txt',
+    for name in ('/usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt',
+                 '/usr/share/dirb/wordlists/common.txt',
                  '/usr/share/seclists/Discovery/Web-Content/common.txt'):
         if Path(name).is_file():
             return name
