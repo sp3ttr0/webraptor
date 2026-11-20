@@ -62,9 +62,9 @@ def print_banner():
     print(f"{Fore.CYAN}{banner}{Style.RESET_ALL}")
 
 
-MODULES = ('curl', 'whatweb', 'nikto', 'waybackurls', 'ffuf', 'nuclei', 'testssl', 'sslscan')
+MODULES = ('curl', 'whatweb', 'nikto', 'waybackurls', 'ffuf', 'katana', 'nuclei', 'testssl', 'sslscan')
 TLS_MODULES = {'testssl', 'sslscan'}
-AUTH_MODULES = {'testssl', 'curl', 'whatweb', 'nikto', 'ffuf', 'nuclei'}
+AUTH_MODULES = {'testssl', 'curl', 'whatweb', 'nikto', 'ffuf', 'nuclei', 'katana'}
 STOP = threading.Event()
 
 
@@ -122,6 +122,8 @@ def target_key(url):
 
 class Redactor:
     def __init__(self, headers=()):
+        from discovery import SecretMask
+        self.masker = SecretMask()
         secrets = set()
         for name, value in headers:
             secrets.add(value)
@@ -189,7 +191,7 @@ def parse_args(argv=None):
     targets.add_argument('-r', '--resume', metavar='PATH', help='Resume from a previous run folder, its data/ folder, or run.json. Creates a new run and reuses eligible outputs. Supply authentication again; do not combine with a new target.')
     scanners = parser.add_argument_group('Scanner selection and tool checks')
     scanners.add_argument('-ct', '--check-tools', action='store_true', help='Check installed scanner versions and required options, then exit without scanning. Takes no target; respects --modules and --exclude.')
-    scanners.add_argument('-m', '--modules', metavar='NAMES', default=','.join(MODULES), help='Run only these comma-separated scanners. Choices: curl, whatweb, nikto, waybackurls, ffuf, nuclei, testssl, sslscan. Default: all eight.')
+    scanners.add_argument('-m', '--modules', metavar='NAMES', default=','.join(MODULES), help='Run only these comma-separated scanners. Choices: curl, whatweb, nikto, waybackurls, ffuf, katana, nuclei, testssl, sslscan. Default: all nine.')
     scanners.add_argument('-x', '--exclude', metavar='NAMES', action='append', default=[], help='Skip comma-separated scanners from the selected modules. May be repeated. Example: --exclude nuclei,ffuf.')
     scanners.add_argument('-nt', '--nuclei-template', metavar='PATH', help='Use a Nuclei template file or directory. Default: Nuclei chooses from its installed templates.')
     scanners.add_argument('-w', '--wordlist', metavar='FILE', help='Use this list of paths for ffuf. Default: SecLists directory-list-2.3-medium.txt when installed, then Dirb common.txt or SecLists common.txt.')
@@ -203,6 +205,10 @@ def parse_args(argv=None):
     pace.add_argument('-ft', '--ffuf-threads', metavar='COUNT', type=positive_int, default=10, help='Concurrent request workers inside each ffuf process. Requests also obey --ffuf-rate. Default: 10.')
     pace.add_argument('-ww', '--whatweb-wait', metavar='SECONDS', type=positive_int, default=1, help='Whole seconds WhatWeb waits between connections. Default: 1.')
     pace.add_argument('-np', '--nikto-pause', metavar='SECONDS', type=positive_float, default=1, help='Seconds Nikto waits between requests; decimals are allowed, such as 0.5. Default: 1.')
+    pace.add_argument('-kd', '--katana-depth', metavar='COUNT', type=positive_int, default=3, help='Maximum Katana crawl depth. Default: 3.')
+    pace.add_argument('-kr', '--katana-rate', metavar='REQUESTS', type=positive_int, default=10, help='Maximum Katana requests per second. Default: 10.')
+    pace.add_argument('-kl', '--katana-limit', metavar='COUNT', type=positive_int, default=100, help='Maximum pages per origin in Katana. Default: 100.')
+    pace.add_argument('-kt', '--katana-duration', metavar='SECONDS', type=positive_int, default=120, help='Maximum Katana crawl duration. Default: 120 seconds.')
     connection = parser.add_argument_group('HTTP and HTTPS connections')
     connection.add_argument('-sf', '--allow-scheme-fallback', action='store_true', help='If an explicitly supplied HTTP(S) URL cannot be reached, also try the other scheme. Bare domains already allow this by default.')
     connection.add_argument('-k', '--insecure', action='store_true', help='Skip HTTPS certificate validation in HTTP probes/verification and curl, for example for a self-signed test target. Certificate trust checks remain separate.')
@@ -302,7 +308,8 @@ def parse_args(argv=None):
 # Scan settings are persisted without authentication values or input-file contents.
 SAVED_SETTINGS = ('modules', 'threads', 'target_concurrency', 'tool_timeout', 'probe_timeout',
                   'allow_scheme_fallback', 'insecure', 'nuclei_template', 'wordlist',
-                  'nuclei_rate', 'ffuf_rate', 'ffuf_threads', 'whatweb_wait', 'nikto_pause')
+                  'nuclei_rate', 'ffuf_rate', 'ffuf_threads', 'whatweb_wait', 'nikto_pause',
+                  'katana_depth', 'katana_rate', 'katana_limit', 'katana_duration')
 
 
 def load_resume(location):
@@ -330,13 +337,15 @@ def load_resume(location):
         for old, new in (('dirsearch_rate', 'ffuf_rate'), ('dirsearch_threads', 'ffuf_threads')):
             if old in data['settings'] and new not in data['settings']:
                 data['settings'][new] = data['settings'].pop(old)
+    for key, default in (('katana_depth', 3), ('katana_rate', 10), ('katana_limit', 100), ('katana_duration', 120)):
+        data['settings'].setdefault(key, default)
     if set(data['settings']) != set(SAVED_SETTINGS):
         raise ValueError('Incomplete settings')
     settings = data['settings']
     if (not isinstance(settings['modules'], list) or not settings['modules']
             or any(m not in MODULES for m in settings['modules'])):
         raise ValueError('Invalid modules')
-    for key in ('threads', 'target_concurrency', 'nuclei_rate', 'ffuf_rate', 'ffuf_threads', 'whatweb_wait'):
+    for key in ('threads', 'target_concurrency', 'nuclei_rate', 'ffuf_rate', 'ffuf_threads', 'whatweb_wait', 'katana_depth', 'katana_rate', 'katana_limit', 'katana_duration'):
         if type(settings[key]) is not int or settings[key] < 1:
             raise ValueError('Invalid numeric settings')
     for key in ('tool_timeout', 'probe_timeout', 'nikto_pause'):
@@ -411,7 +420,7 @@ def reusable_results(target, args):
 
 
 class Progress:
-    LABELS = {'whatweb': 'WhatWeb', 'nikto': 'Nikto', 'ffuf': 'ffuf',
+    LABELS = {'whatweb': 'WhatWeb', 'nikto': 'Nikto', 'ffuf': 'ffuf', 'katana': 'Katana',
               'nuclei': 'Nuclei', 'waybackurls': 'Waybackurls',
               'verification': 'Finding Verification'}
     OUTCOMES = {'completed': 'Finished', 'incomplete': 'Incomplete', 'failed': 'Failed', 'timed_out': 'Timed Out',
@@ -426,6 +435,7 @@ class Progress:
         self.labels = {target_key(t): urlsplit(t).netloc for t, _ in targets}
         self.elapsed, self.percentages = {}, {}
         self.scanner_metrics = {}
+        self.katana_activity = {}
         self.nikto_activity = {}
         self.tls_activity = {}
         self.whatweb_activity = {}
@@ -442,6 +452,19 @@ class Progress:
         # Raw output is already redacted and saved by run_command. Consume only
         # recognized scanner progress fields, never arbitrary percentages in findings.
         if not self.enabled:
+            return
+        if module == 'katana':
+            try:
+                record = json.loads(text)
+                if not isinstance(record, dict) or not isinstance(record.get('request'), dict):
+                    return
+            except ValueError:
+                return
+            key = (target_key(target), module)
+            with self.lock:
+                if self.states.get(key, (None,))[0] == 'running':
+                    entry = self.katana_activity.setdefault(key, {'responses': 0})
+                    entry.update(responses=entry['responses'] + 1, updated=time.monotonic())
             return
         if module == 'curl':
             if not text.strip():
@@ -665,6 +688,10 @@ class Progress:
                 if key[1] == 'nikto':
                     age = now - activity.get('progress_at', since)
                 stale = key[1] in ('ffuf', 'nuclei', 'nikto') and status == 'running' and age >= self.stale_after
+                if key[1] == 'katana' and status == 'running':
+                    katana_activity = self.katana_activity.get(key, {})
+                    age = now - katana_activity.get('updated', since)
+                    stale = age >= self.stale_after
                 tls_activity = self.tls_activity.get(key, {})
                 tls_age = now - tls_activity.get('output_at', since)
                 if key[1] in ('testssl', 'sslscan') and status == 'running':
@@ -751,6 +778,9 @@ class Progress:
                     output_age = now - activity.get('output_at', since)
                     output_text = f'Last output: {output_age:.0f}s ago' if activity else f'Awaiting output: {output_age:.0f}s'
                     rows.append((status, '  ' + output_text))
+                if key[1] == 'katana' and status == 'running':
+                    entry = self.katana_activity.get(key, {})
+                    rows.append(('stale' if stale else status, f"  Responses received: {entry.get('responses', 0)} | Last update: {age:.0f}s ago" + (' | STALE' if stale else '')))
                 if key[1] in ('ffuf', 'nuclei') and status == 'running':
                     if metrics:
                         rate = metrics['rate'] + '/s' if metrics['rate'] is not None else 'unknown rate'
@@ -1077,6 +1107,7 @@ TOOL_CHECKS = {
     'whatweb': (['--version'], ['--help'], ['--color', '--max-threads', '--wait', '--follow-redirect', '-v']),
     'nikto': (['-Version'], ['-Help'], ['-Cgidirs', '-host', '-Pause', '-ask', '-nointeractive', '-Display']),
     'waybackurls': (None, ['-h'], ['-dates', '-no-subs']),
+    'katana': (['-version'], ['-h'], ['-u', '-jc', '-j', '-cs', '-dr', '-rl', '-d', '-ct', '-mdp', '-mrs', '-proxy', '-duc', '-silent', '-nc', '-elog']),
     'ffuf': (['-V'], ['-h'], ['-u', '-w', '-t', '-rate', '-timeout', '-noninteractive', '-mc', '-of', '-o', '-D', '-e']),
     'nuclei': (['-version'], ['-h'], ['-u', '-jsonl-export', '-no-color', '-disable-redirects', '-stats', '-rate-limit', '-o']),
     'testssl': (['--version'], ['--help'], ['--quiet', '--color', '--warnings']),
@@ -1185,6 +1216,14 @@ def build_command(module, target, folder, args):
     elif module == 'waybackurls':
         artifact = folder / 'wayback_results' / 'urls.txt'
         cmd = ['waybackurls', urlsplit(target).hostname]
+    elif module == 'katana':
+        from discovery import scope_regex
+        artifact = folder / 'katana_results.jsonl'
+        cmd = ['katana', '-u', target, '-jc', '-j', '-cs', scope_regex(target), '-dr',
+               '-d', str(args.katana_depth), '-rl', str(args.katana_rate), '-c', '2', '-p', '1',
+               '-ct', str(args.katana_duration) + 's', '-mdp', str(args.katana_limit),
+               '-mrs', str(2 * 1024 * 1024), '-timeout', str(max(1, int(args.probe_timeout))),
+               '-retry', '0', '-duc', '-silent', '-nc', '-elog', os.devnull]
     elif module == 'ffuf':
         artifact = folder / 'ffuf_results.json'
         parsed = urlsplit(target)
@@ -1234,6 +1273,35 @@ def redact_artifact(path, redact):
             cleaned = redact(text)
         if cleaned != text:
             item.write_text(cleaned, encoding='utf-8')
+
+
+def refresh_masked_evidence(folder, summary, redact):
+    """Re-mask after workers/verification discover values; refresh cited hashes."""
+    from verification import redact_tree, render_report
+    for path in folder.rglob('*'):
+        if path.is_file() and not path.is_symlink() and path.suffix != '.html':
+            redact_artifact(path, redact)
+    for module in summary['modules']:
+        module['artifact_hashes'] = {relative:file_digest(folder/relative)
+                                    for relative in module.get('artifacts', []) if (folder/relative).is_file()}
+    summary = redact_tree(summary, redact)
+    report = summary.get('verification')
+    if report is not None:
+        from scanner_report import collect_scanner_results
+        report['scanner_results'] = collect_scanner_results(summary['modules'], folder)
+        for check in report.get('checks', []):
+            for source in check.get('evidence_sources', []):
+                relative = source.get('artifact')
+                if relative:
+                    path = folder/relative
+                    if path.is_file() and path.resolve().is_relative_to(folder.resolve()):
+                        source['sha256'] = file_digest(path)
+                        if source.get('raw_output'):
+                            source['raw_output'] = path.read_text(encoding='utf-8', errors='replace')
+        summary['verification'] = redact_tree(report, redact)
+        write_json(folder/'verification.json', summary['verification'])
+        (folder/'report.html').write_text(render_report(summary['verification']), encoding='utf-8')
+    return summary
 
 
 def nuclei_findings(path, status, redact):
@@ -1299,12 +1367,28 @@ def execute_module(module, target, folder, args, slots, stop, redact, progress_t
                 command_args = copy.copy(args)
                 command_args.headers = []
         cmd, artifact = build_command(module, command_target, folder, command_args)
-        stdout = artifact if module in ('curl', 'whatweb', 'nikto', 'waybackurls', 'testssl', 'sslscan') else folder / (module + '_stdout.log')
+        stdout = artifact if module in ('curl', 'whatweb', 'nikto', 'waybackurls', 'testssl', 'sslscan', 'katana') else folder / (module + '_stdout.log')
         stderr = folder / (module + '_stderr.log')
         result['started_at'] = timestamp()
         result['authentication'] = 'not_applicable' if module in ('waybackurls', 'sslscan') else ('headers_supplied' if command_args.headers else 'none')
         callback = (lambda text: progress.output(progress_target or target, module, text)) if progress and progress.enabled else None
-        result.update(run_command(cmd, stdout, stderr, args.tool_timeout, stop, redact, on_output=callback, tty_stdout=(module in ('sslscan', 'whatweb', 'curl'))))
+        sidecars = []
+        if module == 'katana':
+            from discovery import DiscoveryCapture, guarded_proxy
+            capture = DiscoveryCapture(command_target, redact)
+            with guarded_proxy(command_target, stop, args.probe_timeout, args.insecure) as proxy:
+                result.update(run_command(cmd + ['-proxy', proxy], stdout, stderr,
+                                          args.tool_timeout, stop, capture, on_output=callback))
+            discovery = capture.result()
+            report_path = folder/'katana_discovery.json'
+            write_json(report_path, discovery)
+            sidecars.append(report_path)
+            result['discovery'] = discovery
+            result['findings_status'] = 'candidates' if result['status'] == 'completed' else 'partial'
+            if result['status'] == 'completed' and not discovery['endpoints']:
+                result.update(status='incomplete', findings_status='partial', error='No in-scope responses were captured; discovery is inconclusive.')
+        else:
+            result.update(run_command(cmd, stdout, stderr, args.tool_timeout, stop, redact, on_output=callback, tty_stdout=(module in ('sslscan', 'whatweb', 'curl'))))
         redact_artifact(artifact, redact)
         failure = scanner_failure(module, (stdout, stderr))
         if failure and (result['status'] == 'completed' or module == 'nikto' and result['status'] == 'failed'):
@@ -1328,7 +1412,7 @@ def execute_module(module, target, folder, args, slots, stop, redact, progress_t
                     result.update(status='incomplete', error='ffuf reported request errors; partial results and raw evidence retained.')
             except (OSError, ValueError, TypeError):
                 result.update(status='failed', error='ffuf JSON output missing or invalid; raw evidence retained.')
-        sidecars = [folder/'sslscan_results.xml'] if module == 'sslscan' else [folder/'testssl_results.json'] if module == 'testssl' else [folder/'whatweb_redirects.json'] if module == 'whatweb' else [folder/'nuclei_results.txt'] if module == 'nuclei' else []
+        sidecars += [folder/'sslscan_results.xml'] if module == 'sslscan' else [folder/'testssl_results.json'] if module == 'testssl' else [folder/'whatweb_redirects.json'] if module == 'whatweb' else [folder/'nuclei_results.txt'] if module == 'nuclei' else []
         for sidecar in sidecars:
             if sidecar.is_file():
                 redact_artifact(sidecar, redact)
@@ -1453,6 +1537,7 @@ def scan_target(target, explicit, args, batch_id, slots, stop, redact, run_manif
                     record(result['module'] + ': ' + result['status'])
                     write_json(folder / 'summary.json', summary)
             summary['modules'].sort(key=lambda m: args.modules.index(m['module']))
+            summary = refresh_masked_evidence(folder, summary, redact)
             record('Finding verification started')
             if getattr(args, 'progress', None):
                 args.progress.update(target, 'verification', 'running')
@@ -1465,6 +1550,7 @@ def scan_target(target, explicit, args, batch_id, slots, stop, redact, run_manif
                 write_json(folder / 'verification.json', verification)
                 (folder / 'report.html').write_text(render_report(verification), encoding='utf-8')
                 summary['verification'] = verification
+            summary = refresh_masked_evidence(folder, summary, redact)
             record('Finding verification ' + summary['verification']['status'])
             if getattr(args, 'progress', None):
                 args.progress.update(target, 'verification', summary['verification']['status'])

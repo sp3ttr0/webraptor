@@ -10,6 +10,7 @@ TOOLS = (
     ('nikto', 'Nikto', 'Web server observations and scanner output'),
     ('waybackurls', 'Waybackurls', 'Historical URLs collected from public archives'),
     ('ffuf', 'ffuf', 'Discovered paths and HTTP response details'),
+    ('katana', 'Katana', 'JavaScript endpoints and response sources'),
     ('nuclei', 'Nuclei', 'Template matches requiring independent validation'),
 )
 LIMIT = 65536
@@ -33,6 +34,8 @@ def collect_scanner_results(modules, folder):
             results.append({'module': key, 'status': 'not_run', 'output': '', 'artifacts': []})
             continue
         item = {k: module[k] for k in ('module', 'status', 'error', 'duration_seconds', 'reused', 'findings', 'findings_status') if k in module}
+        if key == 'katana':
+            item['discovery'] = module.get('discovery', {})
         item['artifacts'] = []
         output = ''
         artifacts = module.get('artifacts', [])
@@ -191,6 +194,56 @@ def render_nuclei_text_list(output, label='Nuclei scanner output'):
     return '<ul class="nuclei-console-list" aria-label="' + esc(label) + '">' + ''.join(entries) + '</ul>'
 
 
+def render_discovery(data):
+    """Show discovery and candidate exposures separately from verified findings."""
+    esc = lambda value: html.escape(str(value), quote=True)
+    def link(url):
+        try:
+            p = urlsplit(str(url))
+            if p.scheme in ('http', 'https') and p.netloc:
+                return '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(url) + '</a>'
+        except ValueError:
+            pass
+        return esc(url)
+    endpoints = data.get('endpoints', [])
+    body = '<p class="muted">Exact target origin only; redirects and credential validation disabled. Results are bounded by crawl depth, duration, and page limits.</p>'
+    body += '<h3>Discovered Endpoints (' + str(len(endpoints)) + ')</h3>'
+    if endpoints:
+        body += '<div class="scanner-table"><table><thead><tr><th>Method</th><th>HTTP response</th><th>URL</th><th>Source</th></tr></thead><tbody>'
+        for entry in endpoints:
+            code = str(entry.get('http_status') or 'Not recorded')
+            badge = '<span class="response-code response-' + code[0] + 'xx">' + esc(code) + '</span>' if re.fullmatch('[1-5][0-9]{2}', code) else esc(code)
+            body += '<tr><td data-label="Method">' + esc(entry.get('method', 'GET')) + '</td><td data-label="HTTP response">' + badge + '</td><td data-label="URL">' + link(entry.get('url', '')) + '</td><td data-label="Source">' + link(entry.get('source', '')) + '</td></tr>'
+        body += '</tbody></table></div>'
+    else:
+        body += '<p class="muted">No in-scope endpoints were captured.</p>'
+    return body
+
+
+def render_secret_exposures(results):
+    """Keep unverified secret candidates after the verified Findings Summary."""
+    item = next((r for r in results if r.get('module') == 'katana'), None)
+    if not item or item.get('status') == 'not_run':
+        return ''
+    secrets = item.get('discovery', {}).get('secrets', [])
+    esc = lambda value: html.escape(str(value), quote=True)
+    def link(url):
+        try:
+            p = urlsplit(str(url))
+            if p.scheme in ('http', 'https') and p.netloc:
+                return '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(url) + '</a>'
+        except ValueError:
+            pass
+        return esc(url)
+    body = '<section class="scanner-section" id="potential-secret-exposures"><h2>Potential Secret Exposures <span class="finding-count" aria-label="' + str(len(secrets)) + ' candidates">' + str(len(secrets)) + '</span></h2>'
+    body += '<p class="muted">Searches fetched content for:</p><ul><li>API keys and cloud access key IDs</li><li>Authentication tokens, access tokens, and JWTs</li><li>Passwords and database credentials</li><li>Application and client secrets</li><li>Private keys</li></ul><p class="muted">Results may be false positives, including public identifiers, examples, or inactive credentials. Always double-check the source and validate each result before reporting it as an exposure. Credential validity and permissions have not been tested.</p>'
+    for entry in secrets:
+        body += '<details class="scanner-evidence"><summary>' + esc(entry.get('detector', 'Secret candidate')) + ' · ' + esc(entry.get('confidence', 'candidate')) + '</summary><p>Source: ' + link(entry.get('source_url', '')) + ' · Line: ' + esc(entry.get('line', '')) + ' · HTTP response: ' + esc(entry.get('http_status', '')) + '</p><p>Value: <code>' + esc(entry.get('value', '')) + '</code></p><pre>' + esc(entry.get('context', '')) + '</pre></details>'
+    if not secrets:
+        body += '<p class="muted">No candidates matched the current detectors. This does not establish that no secrets are exposed.</p>'
+    return body + '</section>'
+
+
 def render_scanner_results(results):
     esc = lambda value: html.escape(str(value), quote=True)
     sections = []
@@ -208,7 +261,9 @@ def render_scanner_results(results):
             if not path.is_absolute() and '..' not in path.parts:
                 links.append('<a href="' + esc(quote(artifact, safe='/')) + '">' + esc(artifact) + '</a>')
         content = ''
-        if key == 'nuclei' and output.strip() and not output.lstrip().startswith('{'):
+        if key == 'katana':
+            content = render_discovery(item.get('discovery', {}))
+        elif key == 'nuclei' and output.strip() and not output.lstrip().startswith('{'):
             content = render_nuclei_text_list(output, 'Nuclei matches')
         elif key == 'nuclei' and item.get('findings'):
             entries = []

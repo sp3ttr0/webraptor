@@ -2,7 +2,7 @@
 
 Web application security scanner with automatic finding verification and HTML/JSON reports.
 
-Includes curl, WhatWeb, Nikto, Waybackurls, ffuf, Nuclei, testssl.sh, and sslscan.
+Includes curl, WhatWeb, Nikto, Waybackurls, ffuf, Katana, Nuclei, testssl.sh, and sslscan.
 
 ## Installation
 
@@ -15,7 +15,7 @@ cd webraptor
 source .venv/bin/activate
 ```
 
-Requires Python 3.9+, network access, and sudo. The installer installs dependencies and checks all eight tools.
+Requires Python 3.9+, network access, and sudo. The installer installs dependencies and checks all nine tools.
 
 ## Usage
 
@@ -29,6 +29,9 @@ python webraptor.py -l targets.txt
 # Use a custom discovery wordlist
 python webraptor.py https://example.com -w wordlist.txt
 
+# Discover JavaScript endpoints and potential exposed secrets
+python webraptor.py https://example.com --modules katana
+
 # Resume a previous scan
 python webraptor.py --resume results/<target>/<run-id>/data/run.json
 
@@ -39,6 +42,8 @@ python webraptor.py --help
 
 ffuf uses SecLists `directory-list-2.3-medium.txt` when installed, with Dirb or SecLists `common.txt` as fallbacks.
 
+Katana crawls only the target’s exact origin (scheme, hostname, and port), with redirects disabled. It inspects fetched HTML/JavaScript and other response bodies for provider-specific credentials and sensitive assignments. Candidate exposures display full values and require review; detected values are never used or validated. Discovery is bounded, so missing results do not prove that no endpoints or secrets exist.
+
 ## Flags
 
 | Flag | Description |
@@ -47,7 +52,7 @@ ffuf uses SecLists `directory-list-2.3-medium.txt` when installed, with Dirb or 
 | `-l`, `--targets-file FILE` | Read targets from a file, one per line. |
 | `-r`, `--resume PATH` | Resume from a run folder or manifest; resupply authentication if needed. |
 | `-ct`, `--check-tools` | Check installed tools without scanning. |
-| `-m`, `--modules NAMES` | Run selected tools, separated by commas. Default: all eight. |
+| `-m`, `--modules NAMES` | Run selected tools, separated by commas. Default: all nine. |
 | `-x`, `--exclude NAMES` | Skip comma-separated tools; may be repeated. |
 | `-nt`, `--nuclei-template PATH` | Use a custom Nuclei template file or directory. |
 | `-w`, `--wordlist FILE` | Use a custom ffuf wordlist. |
@@ -60,6 +65,10 @@ ffuf uses SecLists `directory-list-2.3-medium.txt` when installed, with Dirb or 
 | `-ft`, `--ffuf-threads COUNT` | Request workers per ffuf process. Default: `10`. |
 | `-ww`, `--whatweb-wait SECONDS` | Whole seconds between WhatWeb connections. Default: `1`. |
 | `-np`, `--nikto-pause SECONDS` | Delay between Nikto requests; accepts decimals. Default: `1`. |
+| `-kd`, `--katana-depth COUNT` | Maximum crawl depth. Default: `3`. |
+| `-kr`, `--katana-rate REQUESTS` | Maximum Katana requests/second. Default: `10`. |
+| `-kl`, `--katana-limit COUNT` | Maximum pages per origin. Default: `100`. |
+| `-kt`, `--katana-duration SECONDS` | Maximum crawl duration. Default: `120`. |
 | `-sf`, `--allow-scheme-fallback` | Try the other HTTP/HTTPS scheme if an explicit URL is unreachable. |
 | `-k`, `--insecure` | Skip certificate validation in HTTP probes, verification, and curl. |
 | `-H`, `--header HEADER` | Add a quoted `Name: value` header; may be repeated. |
@@ -69,7 +78,7 @@ ffuf uses SecLists `directory-list-2.3-medium.txt` when installed, with Dirb or 
 | `-o`, `--output-dir DIR` | Output directory. Default: `results`. |
 | `-q`, `--no-progress` | Hide the progress panel; still save reports and logs. |
 
-Module names: `curl`, `whatweb`, `nikto`, `waybackurls`, `ffuf`, `nuclei`, `testssl`, `sslscan`.
+Module names: `curl`, `whatweb`, `nikto`, `waybackurls`, `ffuf`, `katana`, `nuclei`, `testssl`, `sslscan`.
 
 ## Reports
 

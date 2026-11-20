@@ -9,7 +9,7 @@ usage() {
     cat <<'HELP'
 Usage: ./install.sh
 Installs WebRaptor dependencies on Kali Linux or Parrot OS, installs Nuclei
-templates, then runs --check-tools for all eight modules without scanning.
+templates, then runs --check-tools for all nine modules without scanning.
 APT operations use sudo when needed. Python packages and upstream fallback
 binaries are installed in this project's .venv/.tools directories.
 After installation: source .venv/bin/activate
@@ -222,11 +222,11 @@ install_go_tool() {
 finish_install() {
 log 'Installing/updating Nuclei templates (no target scan)'
 nuclei -update-templates
-log 'Checking all eight scanner versions and required CLI flags'
-if ! "$PYTHON" "$SCRIPT_DIR/webraptor.py" --check-tools --modules curl,whatweb,nikto,waybackurls,ffuf,nuclei,testssl,sslscan; then
+log 'Checking all nine scanner versions and required CLI flags'
+if ! "$PYTHON" "$SCRIPT_DIR/webraptor.py" --check-tools --modules curl,whatweb,nikto,waybackurls,ffuf,katana,nuclei,testssl,sslscan; then
     die 'One or more scanner checks failed. Review the version/flag diagnostics above; installation is not verified.'
 fi
-log 'All eight modules passed --check-tools.'
+log 'All nine modules passed --check-tools.'
 printf 'Next steps:\n  source %q\n  python %q --help\n' "$SCRIPT_DIR/.venv/bin/activate" "$SCRIPT_DIR/webraptor.py"
 
 }
@@ -282,6 +282,7 @@ install_distro_tool ffuf ffuf
 apt_install dirb  # Provides the default content-discovery wordlist.
 [[ -r /usr/share/dirb/wordlists/common.txt ]] || die 'Default ffuf wordlist is missing after installing dirb.'
 
+install_go_tool katana github.com/projectdiscovery/katana/cmd/katana@latest
 install_go_tool waybackurls github.com/tomnomnom/waybackurls@latest
 install_go_tool nuclei github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
 hash -r
