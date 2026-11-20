@@ -39,6 +39,38 @@ python webraptor.py --help
 
 ffuf uses SecLists `directory-list-2.3-medium.txt` when installed, with Dirb or SecLists `common.txt` as fallbacks.
 
+## Flags
+
+| Flag | Description |
+| --- | --- |
+| `-h`, `--help` | Show help and exit. |
+| `-l`, `--targets-file FILE` | Read targets from a file, one per line. |
+| `-r`, `--resume PATH` | Resume from a run folder or manifest; resupply authentication if needed. |
+| `-ct`, `--check-tools` | Check installed tools without scanning. |
+| `-m`, `--modules NAMES` | Run selected tools, separated by commas. Default: all eight. |
+| `-x`, `--exclude NAMES` | Skip comma-separated tools; may be repeated. |
+| `-nt`, `--nuclei-template PATH` | Use a custom Nuclei template file or directory. |
+| `-w`, `--wordlist FILE` | Use a custom ffuf wordlist. |
+| `-t`, `--threads COUNT` | Maximum simultaneous scanner processes. Default: `6`. |
+| `-tc`, `--target-concurrency COUNT` | Targets scanned simultaneously. Default: `1`. |
+| `-tt`, `--tool-timeout SECONDS` | Time limit per scanner; keeps partial output. Default: `1800`. |
+| `-pt`, `--probe-timeout SECONDS` | Timeout for reachability, verification, ffuf requests, and TLS probes. Default: `8`. |
+| `-nr`, `--nuclei-rate REQUESTS` | Maximum Nuclei requests/second per process. Default: `20`. |
+| `-fr`, `--ffuf-rate REQUESTS` | Maximum ffuf requests/second per process. Default: `10`. |
+| `-ft`, `--ffuf-threads COUNT` | Request workers per ffuf process. Default: `10`. |
+| `-ww`, `--whatweb-wait SECONDS` | Whole seconds between WhatWeb connections. Default: `1`. |
+| `-np`, `--nikto-pause SECONDS` | Delay between Nikto requests; accepts decimals. Default: `1`. |
+| `-sf`, `--allow-scheme-fallback` | Try the other HTTP/HTTPS scheme if an explicit URL is unreachable. |
+| `-k`, `--insecure` | Skip certificate validation in HTTP probes, verification, and curl. |
+| `-H`, `--header HEADER` | Add a quoted `Name: value` header; may be repeated. |
+| `-hf`, `--headers-file FILE` | Read headers from a file, one per line. |
+| `-c`, `--cookie VALUE` | Send a quoted cookie value; cannot combine with `--cookie-file`. |
+| `-cf`, `--cookie-file FILE` | Read a cookie value from a file, not a browser cookie jar. |
+| `-o`, `--output-dir DIR` | Output directory. Default: `results`. |
+| `-q`, `--no-progress` | Hide the progress panel; still save reports and logs. |
+
+Module names: `curl`, `whatweb`, `nikto`, `waybackurls`, `ffuf`, `nuclei`, `testssl`, `sslscan`.
+
 ## Reports
 
 Open `report.html` inside the target's run folder under `results/`. Keep the `data/`, `evidence/`, and `logs/` folders together with the report.
