@@ -245,4 +245,4 @@ def render_scanner_results(results):
         if item.get('reused'):
             meta += ' · reused output'
         sections.append('<section class="scanner-section scanner-collapsible" id="scanner-' + key + '"><details class="scanner-disclosure"><summary><div class="scanner-heading"><div><h2>' + title + '</h2><p>' + description + '</p></div>' + ('<span class="chip">' + esc(meta) + '</span>' if status != 'completed' else '') + '</div></summary><div class="scanner-body">' + content + ('<details class="scanner-artifacts"><summary>Source artifacts</summary><div>' + '<br>'.join(links) + '</div></details>' if links else '') + '</div></details></section>')
-    return '<div class="scanner-results"><p class="muted">Scanner output is shown as collected and is separate from the verified findings below.</p>' + ''.join(sections) + '</div>'
+    return '<div class="scanner-results">' + ''.join(sections) + '</div>'

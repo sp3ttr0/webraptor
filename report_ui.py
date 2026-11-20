@@ -2567,8 +2567,8 @@ def target_section(target, details=None):
         port = parsed.port or (443 if parsed.scheme == 'https' else 80)
     except ValueError:
         return ''
-    fields = [('URL', target), ('Host', parsed.hostname), ('Port', port), ('Scheme', parsed.scheme.upper())]
-    fields.extend((key, value) for key, value in (details or {}).items() if value is not None and value != '')
+    fields = [('Scope', target), ('Host', parsed.hostname), ('Port', port), ('Scheme', parsed.scheme.upper())]
+    fields.extend((key, value) for key, value in (details or {}).items() if key != 'Scope' and value is not None and value != '')
     timestamp_keys = {'Checked', 'Started', 'Finished', 'Generated'}
     rows = ''.join('<div class="target-field' + (' wide' if key in {'URL', 'Scope'} | timestamp_keys else '') +
                    '"><dt>' + esc(key) + '</dt><dd>' +
@@ -2593,7 +2593,7 @@ def page(title, body, subtitle='', target_details=None):
             '<meta http-equiv="Content-Security-Policy" content="' + esc(csp) + '">'
             '<title>' + esc(title) + '</title><style>' + STYLE + '</style></head><body><main>'
             '<header><div class="brand"><div class="mark">' + RAPTOR_LOGO + '</div><div><h1>' + esc(title) +
-            '</h1><p class="subtitle">' + esc(subtitle) + '</p></div></div>'
+            '</h1></div></div>'
             '<button id="themeToggle" type="button" aria-label="Switch to dark mode" title="Switch to dark mode" aria-pressed="false">'
             '<svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 13A9 9 0 0 1 11 3.5 9 9 0 1 0 20.5 13Z"/></svg>'
             '<svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg></button></header>'
