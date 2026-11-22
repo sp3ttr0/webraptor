@@ -44,6 +44,8 @@ ffuf uses SecLists `directory-list-2.3-medium.txt` when installed, with Dirb or 
 
 Katana crawls only the target’s exact origin (scheme, hostname, and port), with redirects disabled. It inspects fetched HTML/JavaScript and other response bodies for provider-specific credentials and sensitive assignments. Candidate exposures display full values and require review; detected values are never used or validated. Discovery is bounded, so missing results do not prove that no endpoints or secrets exist.
 
+If your Katana package lacks required options such as `-mdp`, rerun `./install.sh`. The installer installs a compatible managed build when needed; WebRaptor prefers that build even without activating the virtual environment.
+
 ## Flags
 
 | Flag | Description |

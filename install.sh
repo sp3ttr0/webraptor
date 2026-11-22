@@ -219,6 +219,18 @@ install_go_tool() {
     log "Building $executable from its official Go module"
     GOBIN="$SCRIPT_DIR/.venv/bin" GOTOOLCHAIN=auto go install "$module"
 }
+install_compatible_katana() {
+    # Some Kali/Parrot packages lack -mdp (maximum pages). Never drop the limit.
+    if "$PYTHON" "$SCRIPT_DIR/webraptor.py" --check-tools --modules katana; then
+        log 'Existing Katana supports all required options'
+        return
+    fi
+    ensure_go
+    log 'Installing compatible managed Katana v1.8.0 (includes -mdp)'
+    mkdir -p "$SCRIPT_DIR/.tools/katana/bin"
+    GOBIN="$SCRIPT_DIR/.tools/katana/bin" GOTOOLCHAIN=auto go install github.com/projectdiscovery/katana/cmd/katana@v1.8.0
+    "$PYTHON" "$SCRIPT_DIR/webraptor.py" --check-tools --modules katana || die 'Managed Katana failed its capability check.'
+}
 finish_install() {
 log 'Installing/updating Nuclei templates (no target scan)'
 nuclei -update-templates
@@ -282,7 +294,7 @@ install_distro_tool ffuf ffuf
 apt_install dirb  # Provides the default content-discovery wordlist.
 [[ -r /usr/share/dirb/wordlists/common.txt ]] || die 'Default ffuf wordlist is missing after installing dirb.'
 
-install_go_tool katana github.com/projectdiscovery/katana/cmd/katana@latest
+install_compatible_katana
 install_go_tool waybackurls github.com/tomnomnom/waybackurls@latest
 install_go_tool nuclei github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
 hash -r

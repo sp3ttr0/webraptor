@@ -1098,6 +1098,9 @@ def tool_executable(module):
     if module == 'testssl':
         from verification import testssl_executable
         return testssl_executable()
+    if module == 'katana':
+        managed = Path(__file__).resolve().parent/'.tools/katana/bin/katana'
+        return shutil.which(str(managed)) or shutil.which('katana')
     return shutil.which(module)
 
 
@@ -1107,12 +1110,26 @@ TOOL_CHECKS = {
     'whatweb': (['--version'], ['--help'], ['--color', '--max-threads', '--wait', '--follow-redirect', '-v']),
     'nikto': (['-Version'], ['-Help'], ['-Cgidirs', '-host', '-Pause', '-ask', '-nointeractive', '-Display']),
     'waybackurls': (None, ['-h'], ['-dates', '-no-subs']),
-    'katana': (['-version'], ['-h'], ['-u', '-jc', '-j', '-cs', '-dr', '-rl', '-d', '-ct', '-mdp', '-mrs', '-proxy', '-duc', '-silent', '-nc', '-elog']),
+    'katana': (['-version'], ['-h'], ['-u', '-jc', '-j', '-cs', '-dr', '-rl', '-d', '-ct', '-mdp', '-mrs', '-proxy', '-duc', '-silent', '-nc', '-elog', '-c', '-p', '-retry', '-timeout']),
     'ffuf': (['-V'], ['-h'], ['-u', '-w', '-t', '-rate', '-timeout', '-noninteractive', '-mc', '-of', '-o', '-D', '-e']),
     'nuclei': (['-version'], ['-h'], ['-u', '-jsonl-export', '-no-color', '-disable-redirects', '-stats', '-rate-limit', '-o']),
     'testssl': (['--version'], ['--help'], ['--quiet', '--color', '--warnings']),
     'sslscan': (['--version'], ['--help'], ['--no-colour']),
 }
+
+
+def katana_compatibility(executable, stop):
+    """Reject unsupported CLI versions before any target traffic is sent."""
+    if not executable:
+        return False, ['executable']
+    with tempfile.TemporaryDirectory(prefix='webraptor-katana-check-') as temp:
+        folder = Path(temp)
+        probe = run_command([executable, '-h'], folder/'out', folder/'err',
+                            10, stop, Redactor())
+        text = ''.join(p.read_text() for p in (folder/'out', folder/'err') if p.is_file())
+    missing = [flag for flag in TOOL_CHECKS['katana'][2] + ['-H']
+               if not re.search(r'(?<![\w-])' + re.escape(flag) + r'(?![\w-])', text)]
+    return probe['exit_code'] in (0, 1, 2) and bool(text) and not missing, missing
 
 
 def check_tools(args):
@@ -1219,7 +1236,7 @@ def build_command(module, target, folder, args):
     elif module == 'katana':
         from discovery import scope_regex
         artifact = folder / 'katana_results.jsonl'
-        cmd = ['katana', '-u', target, '-jc', '-j', '-cs', scope_regex(target), '-dr',
+        cmd = [tool_executable('katana') or 'katana', '-u', target, '-jc', '-j', '-cs', scope_regex(target), '-dr',
                '-d', str(args.katana_depth), '-rl', str(args.katana_rate), '-c', '2', '-p', '1',
                '-ct', str(args.katana_duration) + 's', '-mdp', str(args.katana_limit),
                '-mrs', str(2 * 1024 * 1024), '-timeout', str(max(1, int(args.probe_timeout))),
@@ -1366,6 +1383,19 @@ def execute_module(module, target, folder, args, slots, stop, redact, progress_t
             if resolved.get('cross_origin_redirect'):
                 command_args = copy.copy(args)
                 command_args.headers = []
+        if module == 'katana':
+            checked = time.monotonic()
+            compatible, missing = katana_compatibility(tool_executable('katana'), stop)
+            if not compatible:
+                message = ('Installed Katana lacks required options: ' + ', '.join(missing)
+                           if missing else 'Katana capability probe failed or timed out')
+                message += '. Rerun ./install.sh to install the compatible managed Katana build; the crawl was not started.'
+                path = folder/'katana_compatibility.log'
+                path.write_text(message + '\n', encoding='utf-8')
+                result.update(status='cancelled' if stop.is_set() else 'failed', error=message,
+                              duration_seconds=round(time.monotonic()-checked, 3),
+                              artifacts=[path.name], artifact_hashes={path.name:file_digest(path)})
+                return result
         cmd, artifact = build_command(module, command_target, folder, command_args)
         stdout = artifact if module in ('curl', 'whatweb', 'nikto', 'waybackurls', 'testssl', 'sslscan', 'katana') else folder / (module + '_stdout.log')
         stderr = folder / (module + '_stderr.log')
