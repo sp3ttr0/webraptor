@@ -237,8 +237,21 @@ def render_secret_exposures(results):
         return esc(url)
     body = '<section class="scanner-section" id="potential-secret-exposures"><h2>Potential Secret Exposures <span class="finding-count" aria-label="' + str(len(secrets)) + ' candidates">' + str(len(secrets)) + '</span></h2>'
     body += '<p class="muted">Searches fetched content for:</p><ul><li>API keys and cloud access key IDs</li><li>Authentication tokens, access tokens, and JWTs</li><li>Passwords and database credentials</li><li>Application and client secrets</li><li>Private keys</li></ul><p class="muted">Results may be false positives, including public identifiers, examples, or inactive credentials. Always double-check the source and validate each result before reporting it as an exposure. Credential validity and permissions have not been tested.</p>'
+    if secrets:
+        body += ('<nav class="secret-pagination" id="secretPagination" aria-label="Secret exposure pagination" hidden>'
+                 '<label for="secretPageSize">Items per page <select id="secretPageSize">'
+                 '<option value="10">10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option></select></label>'
+                 '<span id="secretPageStatus" role="status" aria-live="polite" aria-atomic="true"></span>'
+                 '<div class="secret-page-buttons">'
+                 '<button type="button" id="secretFirst" aria-controls="secret-exposure-list" aria-label="First page of secret exposures">First</button>'
+                 '<button type="button" id="secretPrevious" aria-controls="secret-exposure-list" aria-label="Previous page of secret exposures">Previous</button>'
+                 '<button type="button" id="secretNext" aria-controls="secret-exposure-list" aria-label="Next page of secret exposures">Next</button>'
+                 '<button type="button" id="secretLast" aria-controls="secret-exposure-list" aria-label="Last page of secret exposures">Last</button></div></nav>'
+                 '<div id="secret-exposure-list">')
     for entry in secrets:
-        body += '<details class="scanner-evidence"><summary>' + esc(entry.get('detector', 'Secret candidate')) + ' · ' + esc(entry.get('confidence', 'candidate')) + '</summary><p>Source: ' + link(entry.get('source_url', '')) + ' · Line: ' + esc(entry.get('line', '')) + ' · HTTP response: ' + esc(entry.get('http_status', '')) + '</p><p>Value: <code>' + esc(entry.get('value', '')) + '</code></p><pre>' + esc(entry.get('context', '')) + '</pre></details>'
+        body += '<details class="scanner-evidence secret-item"><summary>' + esc(entry.get('detector', 'Secret candidate')) + ' · ' + esc(entry.get('confidence', 'candidate')) + '</summary><p>Source: ' + link(entry.get('source_url', '')) + ' · Line: ' + esc(entry.get('line', '')) + ' · HTTP response: ' + esc(entry.get('http_status', '')) + '</p><p>Value: <code>' + esc(entry.get('value', '')) + '</code></p><pre>' + esc(entry.get('context', '')) + '</pre></details>'
+    if secrets:
+        body += '</div>'
     if not secrets:
         body += '<p class="muted">No candidates matched the current detectors. This does not establish that no secrets are exposed.</p>'
     return body + '</section>'
