@@ -51,9 +51,9 @@ def collect_scanner_results(modules, folder):
             item['artifacts'].append(relative)
             if not output and not relative.endswith(('_stderr.txt', '_stderr.log')):
                 with candidate.open('rb') as stream:
-                    data = stream.read() if key == 'ffuf' else stream.read(LIMIT + 1)
-                output = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', (data if key == 'ffuf' else data[:LIMIT]).decode('utf-8', errors='replace'))
-                item['truncated'] = key != 'ffuf' and len(data) > LIMIT
+                    data = stream.read() if key in ('ffuf', 'waybackurls', 'nuclei') else stream.read(LIMIT + 1)
+                output = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', (data if key in ('ffuf', 'waybackurls', 'nuclei') else data[:LIMIT]).decode('utf-8', errors='replace'))
+                item['truncated'] = key not in ('ffuf', 'waybackurls', 'nuclei') and len(data) > LIMIT
             if key == 'ffuf' and relative.endswith('ffuf_stdout.log'):
                 item['raw_output'] = candidate.read_text(encoding='utf-8', errors='replace')[:LIMIT]
         if key == 'whatweb' and item.get('status') == 'completed' and not whatweb_http_200(output):
@@ -179,7 +179,7 @@ def render_nuclei_evidence(output, captured_findings=None):
 
 
 
-def render_nuclei_text_list(output, label='Nuclei scanner output'):
+def render_nuclei_text_list(output, label='Nuclei scanner output', pagination_group=None):
     """Use identical native scanner lines in both the results and evidence views."""
     esc = lambda value: html.escape(str(value), quote=True)
     ranks = {level: rank for rank, level in enumerate(('critical', 'high', 'medium', 'low', 'info', 'unknown'))}
@@ -205,8 +205,9 @@ def render_nuclei_text_list(output, label='Nuclei scanner output'):
                 pieces.append('<a href="' + esc(token) + '" target="_blank" rel="noopener noreferrer">' + esc(token) + '</a>' if valid_url else esc(token))
             cursor = match.end()
         pieces.append(esc(line[cursor:]))
-        entries.append('<li><code>' + ''.join(pieces) + '</code></li>')
-    return '<ul class="nuclei-console-list" aria-label="' + esc(label) + '">' + ''.join(entries) + '</ul>'
+        entries.append('<li' + (' data-page-item' if pagination_group else '') + '><code>' + ''.join(pieces) + '</code></li>')
+    content = '<ul class="nuclei-console-list" aria-label="' + esc(label) + '">' + ''.join(entries) + '</ul>'
+    return paginate_content(content, pagination_group, label) if pagination_group and entries else content
 
 
 def render_discovery(data):
@@ -283,7 +284,7 @@ def render_scanner_results(results):
         if key == 'katana':
             content = render_discovery(item.get('discovery', {}))
         elif key == 'nuclei' and output.strip() and not output.lstrip().startswith('{'):
-            content = render_nuclei_text_list(output, 'Nuclei matches')
+            content = render_nuclei_text_list(output, 'Nuclei matches', 'nuclei-result-list')
         elif key == 'nuclei' and item.get('findings'):
             entries = []
             severity_order = {name: rank for rank, name in enumerate(('critical', 'high', 'medium', 'low', 'info'))}
@@ -294,12 +295,12 @@ def render_scanner_results(results):
                           if parsed.scheme.lower() in ('http', 'https') and parsed.netloc else '<span>' + esc(url) + '</span>')
                 severity = str(finding.get('severity', 'unknown')).lower()
                 severity_class = severity if severity in ('critical', 'high', 'medium', 'low', 'info', 'unknown') else 'unknown'
-                entries.append('<li><div class="nuclei-match-title"><span class="nuclei-severity severity-' + severity_class + '">' + esc(severity) + '</span><strong>' + esc(finding.get('name', 'Unnamed match')) +
+                entries.append('<li data-page-item><div class="nuclei-match-title"><span class="nuclei-severity severity-' + severity_class + '">' + esc(severity) + '</span><strong>' + esc(finding.get('name', 'Unnamed match')) +
                                '</strong><code>' + esc(finding.get('template_id', '')) + '</code></div>' + target + '</li>')
-            content = '<ul class="nuclei-results" aria-label="Nuclei matches">' + ''.join(entries) + '</ul>'
+            content = paginate_content('<ul class="nuclei-results" aria-label="Nuclei matches">' + ''.join(entries) + '</ul>', 'nuclei-result-list', 'Nuclei matches')
         elif key == 'waybackurls' and output.strip():
             urls = list(dict.fromkeys(line.strip() for line in output.splitlines() if line.strip()))
-            content = '<p class="muted">' + str(len(urls)) + ' archived URL entries shown; historical URLs may no longer exist.</p><ol class="scanner-urls">' + ''.join('<li>' + ('<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(url) + '</a>' if urlsplit(url).scheme.lower() in ('http', 'https') and urlsplit(url).netloc else '<span>' + esc(url) + '</span>') + '</li>' for url in urls) + '</ol>'
+            content = '<p class="muted">' + str(len(urls)) + ' archived URL entries shown; historical URLs may no longer exist.</p>' + paginate_content('<ol class="scanner-urls">' + ''.join('<li data-page-item value="' + str(index) + '">' + ('<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(url) + '</a>' if urlsplit(url).scheme.lower() in ('http', 'https') and urlsplit(url).netloc else '<span>' + esc(url) + '</span>') + '</li>' for index, url in enumerate(urls, 1)) + '</ol>', 'waybackurls-result-list', 'Waybackurls results')
         elif output.strip():
             content = structured_output(key, output) or '<p class="muted">No structured entries could be extracted. See Evidence for the captured output.</p>'
         else:
