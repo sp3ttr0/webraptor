@@ -63,6 +63,20 @@ def collect_scanner_results(modules, folder):
     return results
 
 
+def paginate_content(content, group, label):
+    """Keep complete offline evidence with synchronized controls at both ends."""
+    esc = lambda value: html.escape(str(value), quote=True)
+    def controls(position):
+        select_id = group + '-page-size-' + position
+        return ('<nav class="secret-pagination" data-page-controls aria-label="' + esc(label + ' pagination (' + position + ')') + '" hidden>'
+                '<label for="' + esc(select_id) + '">Items per page <select data-page-size id="' + esc(select_id) + '">'
+                '<option value="10">10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option></select></label>'
+                '<span data-page-status role="status" aria-live="polite" aria-atomic="true"></span><div class="secret-page-buttons">' +
+                ''.join('<button type="button" data-page-action="' + action + '" aria-controls="' + esc(group) + '" aria-label="' + esc(title + ' page of ' + label.lower()) + '">' + title + '</button>'
+                        for action, title in (('first', 'First'), ('previous', 'Previous'), ('next', 'Next'), ('last', 'Last'))) + '</div></nav>')
+    return '<div data-paginated>' + controls('top') + '<div id="' + esc(group) + '">' + content + '</div>' + controls('bottom') + '</div>'
+
+
 def structured_output(key, output):
     """Extract display fields conservatively; preserve the full capture as evidence."""
     esc = lambda value: html.escape(str(value), quote=True)
@@ -102,9 +116,10 @@ def structured_output(key, output):
                 match = re.match(r'^\s*(\d{3})\s+(\S+)\s+(https?://\S+)(?:\s+(.*))?$', line)
                 if match:
                     rows.append((match[1], match[2], match[3], match[4] or ''))
-        return ('<div class="discovery-list" role="list" aria-label="Discovered paths"><div class="discovery-line discovery-labels" aria-hidden="true"><span>Response code</span><span>Size</span><span>URL</span></div>' + ''.join(
-            '<div class="discovery-line" role="listitem"><span aria-label="Response code">' + '<span class="response-code response-' + code[0] + 'xx">' + esc(code) + '</span></span><span aria-label="Size">' + esc(size) + '</span><a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(url) + '</a></div>'
+        content = ('<div class="discovery-list" role="list" aria-label="Discovered paths"><div class="discovery-line discovery-labels" aria-hidden="true"><span>Response code</span><span>Size</span><span>URL</span></div>' + ''.join(
+            '<div class="discovery-line" data-page-item role="listitem"><span aria-label="Response code">' + '<span class="response-code response-' + code[0] + 'xx">' + esc(code) + '</span></span><span aria-label="Size">' + esc(size) + '</span><a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(url) + '</a></div>'
             for code, size, url, _ in sorted(rows, key=lambda row: (int(row[0]), row[2]))) + '</div>') if rows else ''
+        return paginate_content(content, key + '-endpoint-list', 'ffuf results' if key == 'ffuf' else 'Saved Dirsearch results') if rows else ''
     return ''
 
 
@@ -209,12 +224,13 @@ def render_discovery(data):
     body = '<p class="muted">Exact target origin only; redirects and credential validation disabled. Results are bounded by crawl depth, duration, and page limits.</p>'
     body += '<h3>Discovered Endpoints (' + str(len(endpoints)) + ')</h3>'
     if endpoints:
-        body += '<div class="scanner-table"><table><thead><tr><th>Method</th><th>HTTP response</th><th>URL</th><th>Source</th></tr></thead><tbody>'
+        table = '<div class="scanner-table"><table><thead><tr><th>Method</th><th>HTTP response</th><th>URL</th><th>Source</th></tr></thead><tbody>'
         for entry in endpoints:
             code = str(entry.get('http_status') or 'Not recorded')
             badge = '<span class="response-code response-' + code[0] + 'xx">' + esc(code) + '</span>' if re.fullmatch('[1-5][0-9]{2}', code) else esc(code)
-            body += '<tr><td data-label="Method">' + esc(entry.get('method', 'GET')) + '</td><td data-label="HTTP response">' + badge + '</td><td data-label="URL">' + link(entry.get('url', '')) + '</td><td data-label="Source">' + link(entry.get('source', '')) + '</td></tr>'
-        body += '</tbody></table></div>'
+            table += '<tr data-page-item><td data-label="Method">' + esc(entry.get('method', 'GET')) + '</td><td data-label="HTTP response">' + badge + '</td><td data-label="URL">' + link(entry.get('url', '')) + '</td><td data-label="Source">' + link(entry.get('source', '')) + '</td></tr>'
+        table += '</tbody></table></div>'
+        body += paginate_content(table, 'katana-endpoint-list', 'Katana endpoints')
     else:
         body += '<p class="muted">No in-scope endpoints were captured.</p>'
     return body
@@ -237,21 +253,11 @@ def render_secret_exposures(results):
         return esc(url)
     body = '<section class="scanner-section" id="potential-secret-exposures"><h2>Potential Secret Exposures <span class="finding-count" aria-label="' + str(len(secrets)) + ' candidates">' + str(len(secrets)) + '</span></h2>'
     body += '<p class="muted">Searches fetched content for:</p><ul><li>API keys and cloud access key IDs</li><li>Authentication tokens, access tokens, and JWTs</li><li>Passwords and database credentials</li><li>Application and client secrets</li><li>Private keys</li></ul><p class="muted">Results may be false positives, including public identifiers, examples, or inactive credentials. Always double-check the source and validate each result before reporting it as an exposure. Credential validity and permissions have not been tested.</p>'
-    if secrets:
-        body += ('<nav class="secret-pagination" id="secretPagination" aria-label="Secret exposure pagination" hidden>'
-                 '<label for="secretPageSize">Items per page <select id="secretPageSize">'
-                 '<option value="10">10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option></select></label>'
-                 '<span id="secretPageStatus" role="status" aria-live="polite" aria-atomic="true"></span>'
-                 '<div class="secret-page-buttons">'
-                 '<button type="button" id="secretFirst" aria-controls="secret-exposure-list" aria-label="First page of secret exposures">First</button>'
-                 '<button type="button" id="secretPrevious" aria-controls="secret-exposure-list" aria-label="Previous page of secret exposures">Previous</button>'
-                 '<button type="button" id="secretNext" aria-controls="secret-exposure-list" aria-label="Next page of secret exposures">Next</button>'
-                 '<button type="button" id="secretLast" aria-controls="secret-exposure-list" aria-label="Last page of secret exposures">Last</button></div></nav>'
-                 '<div id="secret-exposure-list">')
+    entries = ''
     for entry in secrets:
-        body += '<details class="scanner-evidence secret-item"><summary>' + esc(entry.get('detector', 'Secret candidate')) + ' · ' + esc(entry.get('confidence', 'candidate')) + '</summary><p>Source: ' + link(entry.get('source_url', '')) + ' · Line: ' + esc(entry.get('line', '')) + ' · HTTP response: ' + esc(entry.get('http_status', '')) + '</p><p>Value: <code>' + esc(entry.get('value', '')) + '</code></p><pre>' + esc(entry.get('context', '')) + '</pre></details>'
+        entries += '<details class="scanner-evidence secret-item" data-page-item><summary>' + esc(entry.get('detector', 'Secret candidate')) + ' · ' + esc(entry.get('confidence', 'candidate')) + '</summary><p>Source: ' + link(entry.get('source_url', '')) + ' · Line: ' + esc(entry.get('line', '')) + ' · HTTP response: ' + esc(entry.get('http_status', '')) + '</p><p>Value: <code>' + esc(entry.get('value', '')) + '</code></p><pre>' + esc(entry.get('context', '')) + '</pre></details>'
     if secrets:
-        body += '</div>'
+        body += paginate_content(entries, 'secret-exposure-list', 'Secret exposures')
     if not secrets:
         body += '<p class="muted">No candidates matched the current detectors. This does not establish that no secrets are exposed.</p>'
     return body + '</section>'
