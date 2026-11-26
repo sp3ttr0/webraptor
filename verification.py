@@ -864,6 +864,14 @@ def assess_target(target, args, folder, stop, run_command, redact, modules=()):
     return report
 
 
+def render_saved_report(record_path, output_path, evidence_path=None):
+    """Render local report files without running verification or scanners."""
+    report = json.loads(record_path.read_text(encoding='utf-8'))
+    evidence = json.loads(evidence_path.read_text(encoding='utf-8')) if evidence_path else []
+    markup = render_report(report, xss_evidence=evidence)
+    output_path.write_text(markup, encoding='utf-8')
+
+
 if __name__ == '__main__':
     from argparse import ArgumentParser
     from pathlib import Path
@@ -874,9 +882,6 @@ if __name__ == '__main__':
     parser.add_argument('--xss-evidence', type=Path, help='JSON array of labeled XSS evidence')
     args = parser.parse_args()
     try:
-        report = json.loads(args.report_record.read_text(encoding='utf-8'))
-        evidence = json.loads(args.xss_evidence.read_text(encoding='utf-8')) if args.xss_evidence else []
-        markup = render_report(report, xss_evidence=evidence)
-        args.output.write_text(markup, encoding='utf-8')
+        render_saved_report(args.report_record, args.output, args.xss_evidence)
     except (OSError, ValueError) as exc:
         parser.exit(1, f'{parser.prog}: {exc}\n')

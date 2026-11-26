@@ -91,7 +91,7 @@ To import labeled XSS evidence, pass a separate JSON array to the offline render
 From the WebRaptor directory, render the annotated record offline:
 
 ```sh
-python3 verification.py /path/to/run/data/verification.json /path/to/run/review.html --xss-evidence labeled-evidence.json
+python3 webraptor.py --render-report /path/to/run/data/verification.json --report-output /path/to/run/review.html --xss-evidence labeled-evidence.json
 ```
 
 ## Disclaimer
