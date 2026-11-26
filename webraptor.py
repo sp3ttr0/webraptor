@@ -219,6 +219,7 @@ def parse_args(argv=None):
     cookie.add_argument('-c', '--cookie', metavar='VALUE', help='Send this quoted Cookie header value, such as "session=VALUE". Cannot be combined with --cookie-file.')
     cookie.add_argument('-cf', '--cookie-file', metavar='FILE', help='Read the Cookie header value from a file. Store only its value, such as session=VALUE; not browser cookie-jar format.')
     output = parser.add_argument_group('Reports and terminal output')
+    output.add_argument('--xss-report', type=Path, metavar='RUN_FOLDER', help='Render review.html offline using data/verification.json and labeled-evidence.json from the run folder.')
     output.add_argument('-rr', '--render-report', type=Path, metavar='FILE', help='Render a saved verification.json offline. Requires --report-output.')
     output.add_argument('-ro', '--report-output', type=Path, metavar='FILE', help='Write the offline HTML report to this file.')
     output.add_argument('-xe', '--xss-evidence', type=Path, metavar='FILE', help='Import labeled XSS evidence from a local JSON file when using --render-report.')
@@ -227,6 +228,12 @@ def parse_args(argv=None):
     parser.add_argument('-vf', '--verify-findings', action='store_true', help=argparse.SUPPRESS)  # Legacy no-op; verification is automatic.
     tokens = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(tokens)
+    if args.xss_report is not None:
+        if args.render_report or args.report_output or args.xss_evidence:
+            parser.error('--xss-report already selects the report record, evidence, and output paths')
+        args.render_report = args.xss_report / 'data' / 'verification.json'
+        args.xss_evidence = args.xss_report / 'labeled-evidence.json'
+        args.report_output = args.xss_report / 'review.html'
     if args.render_report:
         if args.target or args.targets_file or args.resume or args.check_tools or args.verify_findings:
             parser.error('--render-report cannot be combined with a target, resume, or tool checks')

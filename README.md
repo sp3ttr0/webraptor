@@ -88,7 +88,13 @@ Open `report.html` inside the target's run folder under `results/`. Keep the `da
 
 To import labeled XSS evidence, pass a separate JSON array to the offline renderer. Each record needs a `label` (`DOM-based` or `Reflected`) and an `excerpt`. Optional fields are `title`, `url`, and either `line` for DOM-based records or `parameter` and `context` for reflected records. Use excerpts that are safe to include in the report. Existing `xss_candidates` in the report record are also displayed.
 
-From the WebRaptor directory, render the annotated record offline:
+Save the labeled evidence as `labeled-evidence.json` in the run folder beside `report.html`. From the WebRaptor directory, write `review.html` in that folder offline:
+
+```sh
+python3 webraptor.py --xss-report /path/to/run
+```
+
+To select different filenames, pass the paths explicitly:
 
 ```sh
 python3 webraptor.py --render-report /path/to/run/data/verification.json --report-output /path/to/run/review.html --xss-evidence labeled-evidence.json
