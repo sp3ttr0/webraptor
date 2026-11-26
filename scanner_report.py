@@ -264,6 +264,28 @@ def render_secret_exposures(results):
     return body + '</section>'
 
 
+def import_xss_evidence(records):
+    """Map explicitly labeled evidence records to report candidates."""
+    if not isinstance(records, list):
+        raise ValueError('XSS evidence must be a JSON array')
+    kinds = {
+        'dom': 'dom', 'dom-based': 'dom', 'dom-based xss': 'dom',
+        'reflected': 'reflected', 'reflected xss': 'reflected',
+    }
+    candidates = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        kind = kinds.get(str(record.get('label', '')).strip().casefold())
+        excerpt = record.get('excerpt')
+        if not kind or not isinstance(excerpt, str) or not excerpt.strip():
+            continue
+        fields = ('title', 'url', 'line') if kind == 'dom' else ('title', 'url', 'parameter', 'context')
+        candidate = {field: record[field] for field in fields if field in record}
+        candidates.append(dict(candidate, kind=kind, excerpt=excerpt))
+    return candidates
+
+
 def render_xss_candidates(candidates):
     """Render analyst annotations from saved evidence as unverified candidates."""
     if not isinstance(candidates, list):

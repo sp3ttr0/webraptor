@@ -702,7 +702,7 @@ def render_sources(sources, compact=False):
     return ''.join(blocks) or '<span class="muted">No source recorded; evidence provenance is unavailable.</span>'
 
 
-def render_report(report):
+def render_report(report, *, xss_evidence=None):
     esc = lambda value: html.escape(str(value))
     checks = [enrich_finding(finding) for finding in report['checks']
               if finding.get('status') == 'found' and finding.get('verified') is True]
@@ -720,10 +720,13 @@ def render_report(report):
     body += '</div><p class="group-intro">Verified findings for this target, with supporting tool evidence. Findings may include false positives; review the evidence carefully and validate each finding.</p>'
     body += ''.join(rows) if rows else '<p class="muted">No findings met the found-and-verified criteria. Review the complete check record for coverage and incomplete checks.</p>'
     body += '</section>'
-    from scanner_report import render_scanner_results, render_secret_exposures, render_xss_candidates
+    from scanner_report import import_xss_evidence, render_scanner_results, render_secret_exposures, render_xss_candidates
     scanner_results = report.get('scanner_results', [])
+    candidates = report.get('xss_candidates', [])
+    if xss_evidence is not None:
+        candidates = (candidates if isinstance(candidates, list) else []) + import_xss_evidence(xss_evidence)
     body = (render_scanner_results(scanner_results) + body +
-            render_xss_candidates(report.get('xss_candidates', [])) +
+            render_xss_candidates(candidates) +
             render_secret_exposures(scanner_results))
     return page('WebRaptor Web Application Security Assessment Report', body, report['target'],
                 {'Server': report.get('server', 'Not recorded'), 'HTTP response': report.get('http_status'),
@@ -859,3 +862,21 @@ def assess_target(target, args, folder, stop, run_command, redact, modules=()):
     (folder / 'verification.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
     (folder / 'report.html').write_text(render_report(report), encoding='utf-8')
     return report
+
+
+if __name__ == '__main__':
+    from argparse import ArgumentParser
+    from pathlib import Path
+
+    parser = ArgumentParser(description='Render a saved WebRaptor report offline.')
+    parser.add_argument('report_record', type=Path, help='Saved verification.json')
+    parser.add_argument('output', type=Path, help='Destination HTML report')
+    parser.add_argument('--xss-evidence', type=Path, help='JSON array of labeled XSS evidence')
+    args = parser.parse_args()
+    try:
+        report = json.loads(args.report_record.read_text(encoding='utf-8'))
+        evidence = json.loads(args.xss_evidence.read_text(encoding='utf-8')) if args.xss_evidence else []
+        markup = render_report(report, xss_evidence=evidence)
+        args.output.write_text(markup, encoding='utf-8')
+    except (OSError, ValueError) as exc:
+        parser.exit(1, f'{parser.prog}: {exc}\n')

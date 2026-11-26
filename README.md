@@ -86,12 +86,12 @@ Module names: `curl`, `whatweb`, `nikto`, `waybackurls`, `ffuf`, `katana`, `nucl
 
 Open `report.html` inside the target's run folder under `results/`. Keep the `data/`, `evidence/`, and `logs/` folders together with the report.
 
-To include XSS review notes from saved evidence, add an `xss_candidates` array to a copy of the report's `data/verification.json`. Each entry needs a `kind` (`dom` or `reflected`) and an `excerpt`. Optional fields are `title`, `url`, and either `line` for DOM-based candidates or `parameter` and `context` for reflected candidates. Use excerpts that are safe to include in the report.
+To import labeled XSS evidence, pass a separate JSON array to the offline renderer. Each record needs a `label` (`DOM-based` or `Reflected`) and an `excerpt`. Optional fields are `title`, `url`, and either `line` for DOM-based records or `parameter` and `context` for reflected records. Use excerpts that are safe to include in the report. Existing `xss_candidates` in the report record are also displayed.
 
 From the WebRaptor directory, render the annotated record offline:
 
 ```sh
-python3 -B -c 'import json, sys; from pathlib import Path; from verification import render_report; Path(sys.argv[2]).write_text(render_report(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))), encoding="utf-8")' annotated.json /path/to/run/review.html
+python3 verification.py /path/to/run/data/verification.json /path/to/run/review.html --xss-evidence labeled-evidence.json
 ```
 
 ## Disclaimer
