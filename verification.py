@@ -720,8 +720,11 @@ def render_report(report):
     body += '</div><p class="group-intro">Verified findings for this target, with supporting tool evidence. Findings may include false positives; review the evidence carefully and validate each finding.</p>'
     body += ''.join(rows) if rows else '<p class="muted">No findings met the found-and-verified criteria. Review the complete check record for coverage and incomplete checks.</p>'
     body += '</section>'
-    from scanner_report import render_scanner_results, render_secret_exposures
-    body = render_scanner_results(report.get('scanner_results', [])) + body + render_secret_exposures(report.get('scanner_results', []))
+    from scanner_report import render_scanner_results, render_secret_exposures, render_xss_candidates
+    scanner_results = report.get('scanner_results', [])
+    body = (render_scanner_results(scanner_results) + body +
+            render_xss_candidates(report.get('xss_candidates', [])) +
+            render_secret_exposures(scanner_results))
     return page('WebRaptor Web Application Security Assessment Report', body, report['target'],
                 {'Server': report.get('server', 'Not recorded'), 'HTTP response': report.get('http_status'),
                  'HTTP URL': report.get('http_url') if report.get('http_url') != report['target'] else None,
