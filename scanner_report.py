@@ -264,65 +264,6 @@ def render_secret_exposures(results):
     return body + '</section>'
 
 
-def import_xss_evidence(records):
-    """Map explicitly labeled evidence records to report candidates."""
-    if not isinstance(records, list):
-        raise ValueError('XSS evidence must be a JSON array')
-    kinds = {
-        'dom': 'dom', 'dom-based': 'dom', 'dom-based xss': 'dom',
-        'reflected': 'reflected', 'reflected xss': 'reflected',
-    }
-    candidates = []
-    for record in records:
-        if not isinstance(record, dict):
-            continue
-        kind = kinds.get(str(record.get('label', '')).strip().casefold())
-        excerpt = record.get('excerpt')
-        if not kind or not isinstance(excerpt, str) or not excerpt.strip():
-            continue
-        fields = ('title', 'url', 'line') if kind == 'dom' else ('title', 'url', 'parameter', 'context')
-        candidate = {field: record[field] for field in fields if field in record}
-        candidates.append(dict(candidate, kind=kind, excerpt=excerpt))
-    return candidates
-
-
-def render_xss_candidates(candidates):
-    """Render analyst annotations from saved evidence as unverified candidates."""
-    if not isinstance(candidates, list):
-        candidates = []
-    esc = lambda value: html.escape(str(value), quote=True)
-    sections = []
-    for kind, label, fields in (
-        ('dom', 'DOM-based', (('url', 'Script URL'), ('line', 'Line'))),
-        ('reflected', 'Reflected', (('url', 'Request URL'), ('parameter', 'Parameter'),
-                                    ('context', 'Response context'))),
-    ):
-        entries = []
-        for candidate in candidates:
-            if not isinstance(candidate, dict) or candidate.get('kind') != kind:
-                continue
-            excerpt = candidate.get('excerpt')
-            if not isinstance(excerpt, str) or not excerpt.strip():
-                continue
-            metadata = ''.join(
-                '<dt>' + title + '</dt><dd>' + esc(candidate[key]) + '</dd>'
-                for key, title in fields if candidate.get(key) is not None
-            )
-            entries.append(
-                '<details class="scanner-evidence" data-page-item>'
-                '<summary>Needs review · ' + esc(candidate.get('title') or label) +
-                '</summary><dl>' + metadata + '</dl><pre>' + esc(excerpt) + '</pre></details>'
-            )
-        content = (paginate_content(''.join(entries), 'xss-' + kind + '-list', label + ' XSS candidates')
-                   if entries else '<p class="muted">No saved candidates.</p>')
-        sections.append('<h3>' + label + '</h3>' + content)
-    return ('<section class="scanner-section" id="possible-xss">'
-            '<h2>Possible Cross-Site Scripting (XSS)</h2>'
-            '<p class="muted">Candidates from saved evidence need manual review. '
-            'A code pattern or reflected value alone does not confirm XSS.</p>' +
-            ''.join(sections) + '</section>')
-
-
 def render_scanner_results(results):
     esc = lambda value: html.escape(str(value), quote=True)
     sections = []

@@ -219,29 +219,11 @@ def parse_args(argv=None):
     cookie.add_argument('-c', '--cookie', metavar='VALUE', help='Send this quoted Cookie header value, such as "session=VALUE". Cannot be combined with --cookie-file.')
     cookie.add_argument('-cf', '--cookie-file', metavar='FILE', help='Read the Cookie header value from a file. Store only its value, such as session=VALUE; not browser cookie-jar format.')
     output = parser.add_argument_group('Reports and terminal output')
-    output.add_argument('--xss-report', type=Path, metavar='RUN_FOLDER', help='Render review.html offline using data/verification.json and labeled-evidence.json from the run folder.')
-    output.add_argument('-rr', '--render-report', type=Path, metavar='FILE', help='Render a saved verification.json offline. Requires --report-output.')
-    output.add_argument('-ro', '--report-output', type=Path, metavar='FILE', help='Write the offline HTML report to this file.')
-    output.add_argument('-xe', '--xss-evidence', type=Path, metavar='FILE', help='Import labeled XSS evidence from a local JSON file when using --render-report.')
     output.add_argument('-o', '--output-dir', metavar='DIR', default='results', help='Save reports, evidence, logs, and resume metadata under this directory. Default: results. Each scan gets a separate run folder.')
     output.add_argument('-q', '--no-progress', action='store_true', help='Hide the scanner progress panel and status updates. Reports and raw evidence/log files are still saved.')
     parser.add_argument('-vf', '--verify-findings', action='store_true', help=argparse.SUPPRESS)  # Legacy no-op; verification is automatic.
     tokens = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(tokens)
-    if args.xss_report is not None:
-        if args.render_report or args.report_output or args.xss_evidence:
-            parser.error('--xss-report already selects the report record, evidence, and output paths')
-        args.render_report = args.xss_report / 'data' / 'verification.json'
-        args.xss_evidence = args.xss_report / 'labeled-evidence.json'
-        args.report_output = args.xss_report / 'review.html'
-    if args.render_report:
-        if args.target or args.targets_file or args.resume or args.check_tools or args.verify_findings:
-            parser.error('--render-report cannot be combined with a target, resume, or tool checks')
-        if not args.report_output:
-            parser.error('--render-report requires --report-output')
-        return args
-    if args.xss_evidence or args.report_output:
-        parser.error('--xss-evidence and --report-output require --render-report')
     if args.verify_findings and (args.resume or args.check_tools):
         parser.error('--verify-findings cannot be combined with --resume or --check-tools')
     # Capture supplied destinations rather than spelling, so resume handles long,
@@ -1652,15 +1634,6 @@ def write_batch(folder, batch_id, results):
 
 def main(argv=None):
     args = parse_args(argv)
-    if args.render_report:
-        from verification import render_saved_report
-        try:
-            render_saved_report(args.render_report, args.report_output, args.xss_evidence)
-        except (OSError, ValueError) as exc:
-            print(f'Could not render report: {exc}', file=sys.stderr)
-            return 1
-        print(f'Report saved to {args.report_output}')
-        return 0
     if os.name != 'posix':
         print('WebRaptor currently requires Linux or macOS.', file=sys.stderr)
         return 1
