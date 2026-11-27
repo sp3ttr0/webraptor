@@ -2611,9 +2611,16 @@ def target_section(target, details=None):
     fields = [('Scope', target), ('Host', parsed.hostname), ('Port', port), ('Scheme', parsed.scheme.upper())]
     fields.extend((key, value) for key, value in (details or {}).items() if key != 'Scope' and value is not None and value != '')
     timestamp_keys = {'Checked', 'Started', 'Finished', 'Generated'}
+    def field_markup(key, value):
+        if key in timestamp_keys:
+            return timestamp_markup(value)
+        if key == 'Robots.txt' and str(value).startswith(('http://', 'https://')):
+            return '<a href="' + esc(value) + '" target="_blank" rel="noopener noreferrer">' + esc(value) + '</a>'
+        return esc(value)
+
     rows = ''.join('<div class="target-field' + (' wide' if key in {'URL', 'Scope'} | timestamp_keys else '') +
                    '"><dt>' + esc(key) + '</dt><dd>' +
-                   (timestamp_markup(value) if key in timestamp_keys else esc(value)) + '</dd></div>' for key, value in fields)
+                   field_markup(key, value) + '</dd></div>' for key, value in fields)
     return '<section class="target-card" aria-labelledby="targetHeading"><h2 id="targetHeading">Target Details</h2><dl>' + rows + '</dl></section>'
 
 

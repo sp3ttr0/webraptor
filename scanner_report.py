@@ -237,6 +237,75 @@ def render_discovery(data):
     return body
 
 
+def detected_platforms(results):
+    """Summarize known CMS and framework plugins from successful WhatWeb evidence."""
+    platforms = {
+        'wordpress': 'WordPress', 'drupal': 'Drupal', 'joomla': 'Joomla',
+        'typo3': 'TYPO3', 'ghost': 'Ghost', 'wagtail': 'Wagtail',
+        'djangocms': 'Django CMS', 'craftcms': 'Craft CMS', 'expressionengine': 'ExpressionEngine',
+        'umbraco': 'Umbraco', 'magento': 'Magento', 'prestashop': 'PrestaShop',
+        'laravel': 'Laravel', 'symfony': 'Symfony', 'django': 'Django',
+        'rubyonrails': 'Ruby on Rails', 'aspnet': 'ASP.NET', 'aspnetmvc': 'ASP.NET MVC',
+        'nextjs': 'Next.js', 'nuxtjs': 'Nuxt.js', 'angularjs': 'AngularJS',
+        'angular': 'Angular', 'codeigniter': 'CodeIgniter', 'cakephp': 'CakePHP',
+        'express': 'Express', 'flask': 'Flask',
+    }
+    detected = {}
+    for result in results:
+        if result.get('module') != 'whatweb':
+            continue
+        output = result.get('output') or ''
+        if not whatweb_http_200(output):
+            continue
+        clean = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', output)
+        for name in re.findall(r'^\[ ([^\n]+?) \][ \t]*$', clean, re.M):
+            key = re.sub(r'[^a-z0-9]', '', name.lower())
+            if key in platforms:
+                detected[platforms[key]] = None
+    return ', '.join(detected)
+
+
+def robots_txt_url(target, results):
+    """Return the origin's robots.txt URL when saved scanner output records HTTP 200."""
+    def origin(url):
+        parsed = urlsplit(url)
+        return parsed.scheme, parsed.hostname, parsed.port or (443 if parsed.scheme == 'https' else 80)
+
+    try:
+        target_origin = origin(target)
+    except ValueError:
+        return None
+    for item in results:
+        if item.get('module') == 'katana':
+            entries = item.get('discovery', {}).get('endpoints', [])
+            url_key, status_key = 'url', 'http_status'
+        elif item.get('module') == 'ffuf':
+            try:
+                entries = json.loads(item.get('output') or '{}').get('results', [])
+            except (ValueError, AttributeError):
+                continue
+            url_key, status_key = 'url', 'status'
+        else:
+            continue
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict) or str(entry.get(status_key)) != '200':
+                continue
+            url = entry.get(url_key)
+            if not isinstance(url, str) or any(c.isspace() for c in url):
+                continue
+            try:
+                parsed = urlsplit(url)
+                if (parsed.scheme in ('http', 'https') and parsed.hostname
+                        and parsed.username is None and parsed.path == '/robots.txt'
+                        and not parsed.query and not parsed.fragment and origin(url) == target_origin):
+                    return url
+            except ValueError:
+                continue
+    return None
+
+
 def render_secret_exposures(results):
     """Keep unverified secret candidates after the verified Findings Summary."""
     item = next((r for r in results if r.get('module') == 'katana'), None)
