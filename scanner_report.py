@@ -258,11 +258,20 @@ def detected_platforms(results):
         if not whatweb_http_200(output):
             continue
         clean = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', output)
-        for name in re.findall(r'^\[ ([^\n]+?) \][ \t]*$', clean, re.M):
+        blocks = re.split(r'^\[ ([^\n]+?) \][ \t]*\r?$', clean, flags=re.M)
+        for name, details in zip(blocks[1::2], blocks[2::2]):
             key = re.sub(r'[^a-z0-9]', '', name.lower())
-            if key in platforms:
-                detected[platforms[key]] = None
-    return ', '.join(detected)
+            if key not in platforms:
+                continue
+            versions = detected.setdefault(platforms[key], {})
+            plugin_details = re.split(r'^HTTP Headers:', details, maxsplit=1, flags=re.M)[0]
+            for version in re.findall(r'^[ \t]*Version[ \t]*:[ \t]*([^\r\n]+)', plugin_details, re.M):
+                if version.strip():
+                    versions[version.strip()] = None
+    return ', '.join(
+        name + (' (' + ', '.join(versions) + ')' if versions else '')
+        for name, versions in detected.items()
+    )
 
 
 def robots_txt_url(target, results):
